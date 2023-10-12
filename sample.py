@@ -12,15 +12,16 @@ from main import PromptDataset, PromptCollator
 from reward import collate
 from utils.utils import load_jsonl, ensure_dir, reduce_sum
 from utils.perspective_api import PerspectiveWorker, make_generations_col
+import time
 
-save_path = 'SAVE_PATH'
+save_path = '/cluster/work/sachan/sauc/quark/evaluation_v2'
 model = 'gpt2-large'
-batch_size = 4
-rate_limit = 135
+batch_size = 2
+rate_limit = 20
 num_samples = 25
 n_extra_tokens = 5
 top_p = 0.9
-checkpoint_path = 'MODEL_CHECKPOINT_PATH'
+checkpoint_path = '/cluster/work/sachan/sauc/ckp_11000.pth'
 print(checkpoint_path)
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -30,19 +31,18 @@ tree_tokens = [' _TREE_TOKEN_{}'.format(str(idx).zfill(5)) for idx in range(n_ex
               [' _TREE_TOKEN_ZERO_COMMENTS']
 
 policy = Policy(model_name=model, temperature=1.0, device=device, reward_cond=True, tree_tokens=tree_tokens)
-# ref_policy = Policy(model_name='gpt2-xl', temperature=1.0, device=device)
 prompt_collator = PromptCollator(tokenizer=policy.tokenizer)
-
 best_cat_id = policy.tokenizer.convert_tokens_to_ids(tree_tokens[0])
 
 if checkpoint_path is not None:
     checkpoint = torch.load(checkpoint_path, map_location='cpu')
     policy.model.load_state_dict(checkpoint['policy_model'])
 
-print('model initialization done!')
+print('[Main thread] model initialization done!')
 
-val_dataset = PromptDataset(path='data/toxicity/dev.jsonl')
+val_dataset = PromptDataset(path='data/toxicity/test.jsonl')
 dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=prompt_collator, drop_last=True)
+print(f"[Main thread] The dataloader has {len(dataloader)} batches, which will lead to a total of {len(dataloader)*batch_size*num_samples} generations with associated toxicity score.")
 
 perspective_file = Path(save_path) / 'perspective.json'
 perspective = PerspectiveWorker(
@@ -50,7 +50,8 @@ perspective = PerspectiveWorker(
     total=len(dataloader) * batch_size * num_samples,
     rate_limit=rate_limit
 )
-
+print("\n[Main thread] A PerspectiveWorker has been created.")
+print(f"PerspectiveWorker enabled: {perspective.enabled}")
 
 def expand(tensor, num_repeat):
     return torch.reshape(tensor[:, None].expand(-1, num_repeat, -1), [batch_size * num_repeat, -1])
@@ -87,6 +88,7 @@ def distinctness(responses, num_sample):
 
 perplexities, prompts, responses = [], [], []
 for i, batch in enumerate(tqdm(dataloader, total=len(dataloader))):
+    print(f"[Main thread] Start processing batch {i}")
     input_ids, attention_mask = batch
 
     input_ids = torch.cat([input_ids.new([best_cat_id] * len(input_ids))[:, None], input_ids], dim=1)
@@ -94,24 +96,31 @@ for i, batch in enumerate(tqdm(dataloader, total=len(dataloader))):
 
     outputs = policy.sample(input_ids=expand(input_ids, num_samples), attention_mask=expand(attention_mask, num_samples),
                             top_p=top_p)
-    #
-    # forward_inputs = {'query_input_ids': outputs['query/input_ids'],
-    #                   'query_mask': outputs['query/mask'],
-    #                   'response_input_ids': outputs['response/input_ids'],
-    #                   'response_mask': outputs['response/mask']}
-    # ref_logprobs = ref_policy.forward_pass(**forward_inputs)['response/log_prob']
-    # perplexity = -1. * reduce_sum(ref_logprobs, outputs['response/mask'].float(), axis=1)
-    # perplexities.extend(perplexity.cpu().detach().numpy().tolist())
 
     prompt, response = outputs['query/text'], outputs['response/text']
     prompts.extend([x for n, x in enumerate(prompt) if not n % num_samples])
     responses.extend(response)
+    print(f"[Main thread] Correctly sampled {len(response)} generations for batch {i}.")
     for j, r in enumerate(response):
-        perspective(f'generation-{i * batch_size + j}', r)
-#
-# print(f"average perplexity = {mean(perplexities):+.2f}")
+        generation_id = f'generation-{i * batch_size * num_samples + j}'
+        print(f"[Main thread] Calling the PerspectiveWorker with a generation_ID {generation_id} associated with the generation {j} of batch {i}.")
+        perspective(generation_id, r)
+        
+    print(f"[Main thread] End processing batch {i}.\n")
+    if i == 2:
+        print(f"\n[Main thread] Breaking loop after having processed batch {i}.\n")
+        break
 
+print(f"[Main thread] The total number of prompts is {len(prompts)}.")
+print(f"[Main thread] The total number of responses is {len(responses)}.")
+
+start_time = time.time()
+print("[Main thread] Stopping PerspectiveWroker...")
 perspective.stop()
+print("[Main thread] PerspectiveWroker stopped.")
+end_time = time.time()
+print(f"[Main thread] It took {end_time - start_time} seconds to wait for the PerspectiveWorker to finish and stop it.")
+"""
 assert os.path.exists(perspective_file), 'missing perspective file'
 data = pd.DataFrame.from_dict({'prompt': prompts})
 results = collate(data, responses, load_jsonl(perspective_file), os.path.join(save_path, 'reward.json'))
@@ -131,3 +140,4 @@ with open(f'{save_path}/eval_results.txt', 'w') as fo:
     fo.write(f'average maximum toxicity = {mean(max_tox):.3f}\n')
     fo.write(f'average toxicity probability = {mean(tox_prob):.3f}\n')
     fo.write(f'dist-1={dist1:.3f}, dist-2={dist2:.3f}, dist-3={dist3:.3f}\n')
+"""

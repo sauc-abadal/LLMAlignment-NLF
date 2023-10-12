@@ -1,0 +1,4 @@
+__pycache__
+utils/__pycache__/
+quark_eval_test.out
+eval_job.sh
