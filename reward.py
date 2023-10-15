@@ -60,7 +60,6 @@ def reward_to_toxicity(score):
 
 # this aggregates and combines data together (prompts, LLM generations, and scores from de API responses)
 # it returns a list containing a batch (another list) of elements as its elements.
-# each batch has keys
 def collate(dataset: Optional[pd.DataFrame],
             generations: List[str],
             responses: Iterable[Dict[str, Any]],

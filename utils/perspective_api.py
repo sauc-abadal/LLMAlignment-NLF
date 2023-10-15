@@ -56,7 +56,6 @@ class PerspectiveAPI:
         self.next_uid = 0
 
     def request(self, texts: Union[str, List[str]]) -> List[Tuple[Optional[Dict[str, Any]], Optional[HttpError]]]:
-        print(f"\n[Parallel thread] Start processing a request consisting on a batch of {len(texts)} generations.")
         if isinstance(texts, str):
             texts = [texts]
 
@@ -65,7 +64,6 @@ class PerspectiveAPI:
         time_since_last_request = time.time() - self.last_request_time
         if time_since_last_request < 1:
             time.sleep(1 - time_since_last_request)
-            print("[Parallel thread] I'm here waiting a bit as the last request was made less than a second ago!")
         self.last_request_time = time.time()
 
         # Keys guaranteed in insertion order (Python 3.7+)
@@ -77,13 +75,10 @@ class PerspectiveAPI:
             responses[request_id] = (response, exception)
 
         # Make API request
-        print("[Parallel thread] Explicitly making the new batch htpp request.")
         batch_request = self.service.new_batch_http_request()
         for uid, text in zip(responses.keys(), texts):
             batch_request.add(self._make_request(text, self.service), callback=response_callback, request_id=uid)
-            print(f"[Parallel thread] Adding request {uid} to the batch request.")
         batch_request.execute()
-        print("[Parallel thread] Explicitly executing the new batch htpp request.")
 
         return list(responses.values())
     
@@ -103,16 +98,11 @@ class PerspectiveAPI:
 
         i = 0
         num_failures = 0
-        print(f"[Parallel thread] Going to process a bulk of requests associated to a corpus of generations of length {len(list(corpus))}.")
         with output_file.open('a') as f:
-            print("[Parallel thread] Output file opened correctly.")
             for batch in batchify(corpus, self.rate_limit):
-                print("[Parallel thread] Processing first batch!")
-                #print(f"[Parallel thread] Processing a batch of {len(batch)} samples...")
                 request_ids = None
                 if isinstance(batch[0], tuple):
                     request_ids, batch = zip(*batch)
-                print("[Parallel thread] Calling the request() method...")
                 for j, (response, exception) in enumerate(self.request(batch)):
                     response_dict = {
                         'request_id': request_ids[j] if request_ids else i,
@@ -126,8 +116,6 @@ class PerspectiveAPI:
 
                     if exception:
                         num_failures += 1
-                        print("[Parallel thread] There was a HTTP failure here!")
-                print("[Parallel thread] Batch processed!")
                 i += len(batch)
                 pbar.update(len(batch))
                 pbar.set_postfix(failures=num_failures, rate_limt=self.rate_limit)
@@ -177,14 +165,12 @@ class PerspectiveWorker:
             return
 
         if request_id not in self.requests_handled:
-            print(f"[Main thread] Putting request {request_id} to the queue to be further processed later.")
             self.task_queue.put((request_id, text))
             
     def stop(self):
         if not self.enabled:
             return
 
-        print("[Main thread] Waiting for Perspective to finish...")
         self.task_queue.put(self.SENTINEL)
         self.process.join()
 

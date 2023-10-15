@@ -8,7 +8,9 @@ from utils.utils import logits_to_entropy, mask_pad
 
 
 class Policy:
-    def __init__(self, model_name, temperature, device, reward_cond=False, tree_tokens=None):
+
+    # MODIFIED
+    def __init__(self, model_name, temperature, device, reward_cond=False):
         self.model = GPT2LMHeadModel.from_pretrained(model_name)
         self.device = device
 
@@ -16,16 +18,22 @@ class Policy:
         self.model.config.pad_token_id = self.tokenizer.pad_token_id
 
         if reward_cond:
-            self.tokenizer.add_tokens(tree_tokens, special_tokens=True)
 
+            # ADD SEPARATOR TOKEN (to be placed between NL Feedback and Prompt)
+            self.tokenizer.add_tokens("<|separator|>", special_tokens=True)
+            self.tokenizer.sep_token = "<|separator|>"
+            self.tokenizer.sep_token_id = self.tokenizer.convert_tokens_to_ids(self.tokenizer.sep_token)
+            self.model.config.sep_token_id = self.tokenizer.sep_token_id
+
+            # initialize newly added embedding with the statistics of the already pre-trained embeddings
             weights = self.model.get_input_embeddings().weight.detach().numpy()
             mean_weights, std_weights = np.mean(weights, axis=0), np.std(weights, axis=0)
-            new_inits = np.vstack([np.random.normal(loc=mean_weights, scale=std_weights) for _ in tree_tokens])
+            new_init = np.random.normal(loc=mean_weights, scale=std_weights)
 
             self.model.resize_token_embeddings(len(self.tokenizer))
             with torch.no_grad():
-                new_inits = torch.tensor(new_inits)
-                self.model.get_input_embeddings().weight[-len(tree_tokens):, :] = new_inits
+                new_init = torch.tensor(new_init)
+                self.model.get_input_embeddings().weight[-1, :] = new_init
 
         self.model = self.model.to(self.device)
         self.model.parallelize()

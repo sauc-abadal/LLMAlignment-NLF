@@ -8,7 +8,7 @@ import pandas as pd
 from tqdm import tqdm
 from policy import Policy
 from torch.utils.data import DataLoader
-from main import PromptDataset, PromptCollator
+from datasets_and_collators import PromptDataset, PromptCollator
 from reward import collate
 from utils.utils import load_jsonl, ensure_dir, reduce_sum
 from utils.perspective_api import PerspectiveWorker, make_generations_col

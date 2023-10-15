@@ -15,11 +15,11 @@ def get_args():
         '--dataset-val', type=str, default='data/toxicity/val.jsonl',
         help='JSONL file containing dev prompts. Each row must contain a prompt at `row["prompt"]["text"]`.')
     parser.add_argument(
-        '--perspective-rate-limit', type=int, default=135, help='number of perspective call per second')
+        '--perspective-rate-limit', type=int, default=60, help='number of perspective call per second')
 
     # reward
     parser.add_argument(
-        '--n_extra_tokens', type=int, default=5, help='number of reward categorization')
+        '--num_quantiles', type=int, default=5, help='number of reward categorization')
     parser.add_argument(
         '--sample-interval', type=int, default=500, help='step interval to sample from current policy')
     parser.add_argument(

@@ -11,7 +11,8 @@ from typing import List
 from datetime import datetime
 from tqdm import tqdm
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
+from datasets_and_collators import PromptDataset, PromptCollator, SequenceDataset, SequenceCollator
 from torch.optim import Adam, Optimizer
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.tensorboard import SummaryWriter
@@ -23,71 +24,8 @@ from data_pool import DataPool
 from reward import Reward, reward_to_toxicity
 from utils.utils import ensure_dir, ceil_div, reduce_mean, reduce_sum, distinctness
 
-logging.basicConfig(level=os.environ.get("LOGLEVEL", "INFO"))
+logging.basicConfig(level=os.environ.get("LOGLEVEL", "INFO")) # log levels, from least severe to most severe, are: DEBUG, INFO, WARNING, ERROR, and CRITICAL.
 log = logging.getLogger(__name__)
-
-
-class PromptDataset(Dataset):
-    def __init__(self, path):
-        self.prompts = [json.loads(s.strip())["prompt"]["text"].strip() for s in open(path, 'r').readlines()]
-
-    def __len__(self):
-        return len(self.prompts)
-
-    def __getitem__(self, idx):
-        return {'prompt': self.prompts[idx]}
-
-
-class PromptCollator(object):
-    def __init__(self, tokenizer):
-        self.tokenizer = tokenizer
-
-    def __call__(self, sequences):
-        prompts = [sequence['prompt'] for sequence in sequences]
-
-        encodings_dict = self.tokenizer(prompts, return_tensors="pt", padding=True)
-        input_ids = encodings_dict['input_ids']
-        attention_mask = encodings_dict['attention_mask']
-
-        return input_ids, attention_mask
-
-
-class SequenceDataset(Dataset):
-    def __init__(self, data_pool: DataPool):
-        self.queries, self.responses, self.cat_tokens = data_pool.get_data()
-
-    def __len__(self):
-        return len(self.queries)
-
-    def __getitem__(self, idx):
-        return {'query': self.queries[idx],
-                'response': self.responses[idx],
-                'cat_tokens': self.cat_tokens[idx]
-                }
-
-
-class SequenceCollator(object):
-    def __init__(self, tokenizer):
-        self.tokenizer = tokenizer
-
-    def __call__(self, sequences):
-        queries = [sequence['query'] for sequence in sequences]
-        responses = [sequence['response'] for sequence in sequences]
-        cat_ids = [self.tokenizer.convert_tokens_to_ids(sequence['cat_tokens']) for sequence in sequences]
-
-        query_encodings_dict = self.tokenizer(queries, return_tensors="pt", padding=True)
-        query_input_ids = query_encodings_dict['input_ids']
-        query_mask = query_encodings_dict['attention_mask']
-
-        query_input_ids = torch.cat([query_input_ids.new(cat_ids)[:, None], query_input_ids], dim=1)
-        query_mask = torch.cat([query_mask.new([1] * len(query_mask))[:, None], query_mask], dim=1)
-
-        response_encodings_dict = self.tokenizer(responses, return_tensors="pt", padding=True)
-        response_input_ids = response_encodings_dict['input_ids']
-        response_mask = response_encodings_dict['attention_mask']
-
-        return query_input_ids, query_mask, response_input_ids, response_mask
-
 
 class FixedController:
     def __init__(self, coef):
@@ -130,10 +68,11 @@ class ConditionTrainer:
         self.ref_policy = ref_policy
         self.data_pool = data_pool
         self.score_model = score_model
-        self.optimizer = optimizer
-        self.scheduler = scheduler
         self.train_dataloader = train_dataloader
         self.val_dataloader = val_dataloader
+        self.optimizer = optimizer
+        self.scheduler = scheduler
+
         self.writer = SummaryWriter()
 
         if self.params.adaptive_kl:
@@ -150,20 +89,102 @@ class ConditionTrainer:
 
         self.tree_tokens = tree_tokens
         self.best_cat = self.tree_tokens[0]
-        self.best_cat_id = self.policy.tokenizer.convert_tokens_to_ids(self.best_cat)
+        self.best_cat_ids = self.policy.tokenizer.convert_tokens_to_ids(self.best_cat)
 
         self.sample_dataloader, self.sampler = None, None
         self.seq_collator = SequenceCollator(tokenizer=policy.tokenizer)
 
+    # MODIFIED
     def add_control_code(self, input_ids, attention_mask):
-        input_ids = torch.cat([input_ids.new([self.best_cat_id] * len(input_ids))[:, None], input_ids], dim=1)
-        attention_mask = torch.cat([attention_mask.new([1] * len(attention_mask))[:, None], attention_mask], dim=1)
+        """
+        Prepend control tokens associated with the best performing quantile to a batch of input sequences.
+
+        This function takes a batch of input token IDs and their corresponding attention masks and adds control tokens
+        associated with the best performing quantile to the beginning of each input sequence. It also inserts a special
+        <|separator|> token between the control tokens and the original input tokens (newly added as not contemplated within the GPT2Tokenizer).
+
+        Args:
+            self (object): The instance of the class containing this method.
+            input_ids (torch.Tensor): A tensor containing token IDs for a batch of input sequences.
+            attention_mask (torch.Tensor): A tensor containing attention masks for the input sequences.
+
+        Returns:
+            torch.Tensor: A tensor containing the modified input token IDs with control tokens prepended, and the separator token.
+            torch.Tensor: A tensor containing the modified attention masks.
+
+        Note:
+            - `self.best_cat_ids` should be set to the control tokens associated with the best performing quantile.
+            - The <|separator|> token is used to separate the control tokens from the input tokens.
+        """
+        input_ids = torch.cat([input_ids.new([self.best_cat_ids] * len(input_ids)),
+                               input_ids.new([[self.policy.tokenizer.sep_token_id]]*len(input_ids)),
+                                input_ids], dim=1)
+        
+        attention_mask = torch.cat([attention_mask.new([[1]*len(self.best_cat_ids)] * len(attention_mask)), 
+                                    attention_mask.new([[1]]*len(attention_mask)),
+                                    attention_mask], dim=1)
+
         return input_ids, attention_mask
 
-    def decode(self, query_input_ids, response_input_ids=None):
-        query = [self.policy.tokenizer.decode(p, skip_special_tokens=True, clean_up_tokenization_spaces=True)
-                 for p in query_input_ids]
+    # NEWLY ADDED
+    def remove_control_code_batch(self, input_ids, attention_mask, rmv_sep_token=False):
+        """
+        Remove control tokens from a batch of input sequences.
 
+        This function takes a batch of input token IDs and their corresponding attention masks and removes control tokens
+        added for conditioning during generation. It also provides the option to remove the separator token.
+
+        Args:
+            self (object): The instance of the class containing this method.
+            input_ids (torch.Tensor]): A tensor containing token IDs for a batch of input sequences.
+            attention_mask (torch.Tensor]): A tensor containing attention masks for the input sequences.
+            rmv_sep_token (bool, optional): Set to True to remove the separator token from the sequences.
+
+        Returns:
+            torch.Tensor]: A tensor containing the modified input token IDs with control tokens removed.
+            torch.Tensor]: A tensor containing the modified attention masks.
+
+        Note:
+            - Control tokens are removed from each sequence, and the separator token can also be removed if specified.
+        """
+        sep_token_id = self.policy.tokenizer.sep_token_id
+        sep_token_mask = (input_ids == sep_token_id)
+        cumulative_mask = sep_token_mask.cumsum(dim=1)
+        tokens_after_special_mask = cumulative_mask > 0
+
+        input_ids = [p[tokens_after_special_mask[i]] for i, p in enumerate(input_ids)]
+        attention_mask = [m[tokens_after_special_mask[i]] for i, m in enumerate(attention_mask)]
+
+        if rmv_sep_token:
+            input_ids = input_ids[:, 1:]
+            attention_mask = attention_mask[:, 1:]
+            
+        return input_ids, attention_mask
+    
+    # MODIFIED
+    def decode(self, query_input_ids, response_input_ids=None):
+        """
+        Decode token sequences into human-readable text.
+
+        This function takes token IDs or sequences and converts them into human-readable text using the tokenizer's decoding
+        capabilities.
+
+        Args:
+            self (object): The instance of the class containing this method.
+            query_input_ids (torch.Tensor or List[List[int]]): A tensor or list of token IDs representing input sequences.
+            response_input_ids (torch.Tensor or List[List[int]], optional): A tensor or list of token IDs representing response
+                sequences. If not provided (None), only the input sequences are decoded.
+
+        Returns:
+            List[str] or Tuple[List[str], List[str]]: If `response_input_ids` is provided, it returns a tuple containing two lists:
+            1. List of decoded input sequences.
+            2. List of decoded response sequences.
+            If `response_input_ids` is not provided, it returns a list containing the decoded input sequences.
+        """
+
+        query = [self.policy.tokenizer.decode(p, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+                for p in query_input_ids]
+            
         if response_input_ids is None:
             return query
 
@@ -237,15 +258,18 @@ class ConditionTrainer:
         self.save(step=step_num)
         self.eval(step=step_num)
 
+    # MODIFIED
     def loss(self, step, query_input_ids, query_mask, response_input_ids, response_mask):
         outputs = self.policy.forward_pass(query_input_ids, query_mask, response_input_ids, response_mask)
         lm_loss, logprobs, entropy, logits = outputs['response/lm_loss'], outputs['response/log_prob'], \
                                              outputs['response/entropy'], outputs['response/logits']
-        logits = outputs['response/logits'][:, :, :-len(self.tree_tokens)]
+        logits = outputs['response/logits'][:, :, :-1] # don't consider the newly added logit associated to the "<|separator|>" token
         masks = response_mask.to(self.policy.device)
 
         with torch.no_grad():
-            ref_outputs = self.ref_policy.forward_pass(query_input_ids[:, 1:], query_mask[:, 1:],
+
+            query_input_ids, query_mask = self.remove_control_code_batch(query_input_ids, query_mask, rmv_sep_token=True)
+            ref_outputs = self.ref_policy.forward_pass(query_input_ids, query_mask,
                                                        response_input_ids, response_mask)
             ref_logprobs, ref_logits = ref_outputs['response/log_prob'], ref_outputs['response/logits']
 
@@ -304,6 +328,7 @@ class ConditionTrainer:
         }, f'{self.params.model_dir}/ckp_{step}.pth')
         log.info(f"[step {step}] model checkpoint saved")
 
+    # MODIFIED
     def eval(self, step):
         if step % self.params.eval_interval != 0:
             return
@@ -314,15 +339,17 @@ class ConditionTrainer:
             with torch.no_grad():
                 input_ids, attention_mask = self.add_control_code(input_ids, attention_mask)
                 rollouts = self.policy.sample(input_ids=input_ids, attention_mask=attention_mask, top_p=self.params.top_p)
-                forward_inputs = {'query_input_ids': rollouts['query/input_ids'][:, 1:],
-                                  'query_mask': rollouts['query/mask'][:, 1:],
+
+                query_input_ids, query_mask = self.remove_control_code_batch(rollouts['query/input_ids'], rollouts['query/mask'], rmv_sep_token=True)
+                forward_inputs = {'query_input_ids': query_input_ids,
+                                  'query_mask': query_mask,
                                   'response_input_ids': rollouts['response/input_ids'],
                                   'response_mask': rollouts['response/mask']}
                 ref_logprobs = self.ref_policy.forward_pass(**forward_inputs)['response/log_prob']
                 perplexity = -1. * reduce_sum(ref_logprobs, rollouts['response/mask'].float(), axis=1)
                 perplexities.extend(perplexity.cpu().detach().numpy().tolist())
 
-                prompt = self.decode(rollouts['query/input_ids'][:, 1:])
+                prompt = self.decode(query_input_ids)
                 response = rollouts['response/text']
                 score = self.score_model.get_reward(prompt, response, f'step{step}_eval{i}')
                 toxicity = [reward_to_toxicity(x) for x in score if x is not None]
@@ -343,7 +370,7 @@ class ConditionTrainer:
 
 
 def main():
-    args = get_args()
+    args = get_args() # args is an "argparse.Namespace" object
 
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -372,15 +399,17 @@ def main():
     with open(os.path.join(args.save_dir, 'args.json'), 'w') as f:
         json.dump(args.__dict__, f, indent=2)
 
-    tree_tokens = [' _TREE_TOKEN_{}'.format(str(idx).zfill(5)) for idx in range(args.n_extra_tokens)] + \
-                  [' _TREE_TOKEN_ZERO_COMMENTS']
+    tags = ["Lowest Toxicity", "Low-Moderate Toxicity", "Moderate Toxicity", "High-Moderate Toxicity", "Maximum Toxicity"]
+    tree_tokens = [policy.tokenizer.convert_ids_to_tokens(policy.tokenizer(tag)["input_ids"]) for tag in tags]
+    log.info(f"Using {args.num_quantiles} quantiles, associated with the following Natural Language tags: {tags}")
+    log.info(f"The tags are converted to the following tokens: {tree_tokens}")
 
     log.info(f'Initializing models ...')
     ref_policy = Policy(model_name=args.init_model, temperature=args.temperature, device=device)
-    policy = Policy(model_name=args.ref_model, temperature=args.temperature, device=device,
-                    reward_cond=True, tree_tokens=tree_tokens)
+    policy = Policy(model_name=args.ref_model, temperature=args.temperature, device=device, reward_cond=True)
+    
     reward = Reward(save_path=args.reward_dir, rate_limit=args.perspective_rate_limit, batch_size=args.batch_size)
-    data_pool = DataPool(tree_tokens=tree_tokens, n_extra_tokens=args.n_extra_tokens)
+    data_pool = DataPool(tree_tokens=tree_tokens, num_quantiles=args.num_quantiles)
     log.info(f'Initialization done!')
 
     prompt_collator = PromptCollator(tokenizer=policy.tokenizer)
@@ -394,8 +423,8 @@ def main():
 
     # set up optimizer and scheduler
     optimizer = Adam(policy.model.parameters(), lr=args.lr, eps=1e-5)
-    args.total_steps = ceil_div(args.total_episodes, args.batch_size)
-    scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.num_warmup_steps, num_training_steps=args.total_steps)
+    args.total_steps = ceil_div(args.total_episodes, args.batch_size) # ((3,000,000 episodes - 1) // 128 bs) + 1 = 23,438 steps
+    scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.num_warmup_steps, num_training_steps=args.total_steps) # wu 500 steps (~2%)
 
     trainer = ConditionTrainer(params=args, policy=policy, ref_policy=ref_policy, data_pool=data_pool,
                                score_model=reward, tree_tokens=tree_tokens,
