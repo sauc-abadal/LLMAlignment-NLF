@@ -59,7 +59,7 @@ class PerspectiveAPI:
         if isinstance(texts, str):
             texts = [texts]
 
-        # Rate limit to 1 batch request per second (60 requests per minute), a batch may include several generations (e.g, 2*25=50)
+        # Rate limit to 1 batch request per second 
         assert len(texts) <= self.rate_limit
         time_since_last_request = time.time() - self.last_request_time
         if time_since_last_request < 1:
@@ -103,6 +103,7 @@ class PerspectiveAPI:
                 request_ids = None
                 if isinstance(batch[0], tuple):
                     request_ids, batch = zip(*batch)
+
                 for j, (response, exception) in enumerate(self.request(batch)):
                     response_dict = {
                         'request_id': request_ids[j] if request_ids else i,
@@ -116,6 +117,7 @@ class PerspectiveAPI:
 
                     if exception:
                         num_failures += 1
+                        
                 i += len(batch)
                 pbar.update(len(batch))
                 pbar.set_postfix(failures=num_failures, rate_limt=self.rate_limit)

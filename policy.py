@@ -22,7 +22,7 @@ class Policy:
             # ADD SEPARATOR TOKEN (to be placed between NL Feedback and Prompt)
             self.tokenizer.add_tokens("<|separator|>", special_tokens=True)
             self.tokenizer.sep_token = "<|separator|>"
-            self.tokenizer.sep_token_id = self.tokenizer.convert_tokens_to_ids(self.tokenizer.sep_token)
+            self.tokenizer.sep_token_id = self.tokenizer.convert_tokens_to_ids([self.tokenizer.sep_token])
             self.model.config.sep_token_id = self.tokenizer.sep_token_id
 
             # initialize newly added embedding with the statistics of the already pre-trained embeddings

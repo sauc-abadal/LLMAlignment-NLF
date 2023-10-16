@@ -15,7 +15,9 @@ from torch.utils.data import DataLoader
 from datasets_and_collators import PromptDataset, PromptCollator, SequenceDataset, SequenceCollator
 from torch.optim import Adam, Optimizer
 from torch.optim.lr_scheduler import LambdaLR
-from torch.utils.tensorboard import SummaryWriter
+# from torch.utils.tensorboard import SummaryWriter
+import wandb
+from utils.constants import WANDB_API_KEY
 from transformers import get_linear_schedule_with_warmup
 
 from arguments import get_args
@@ -73,7 +75,7 @@ class ConditionTrainer:
         self.optimizer = optimizer
         self.scheduler = scheduler
 
-        self.writer = SummaryWriter()
+        # self.writer = SummaryWriter()
 
         if self.params.adaptive_kl:
             self.kl_ctl = AdaptiveController(self.params.kl_coef, self.params.target_kl, self.params.horizon)
@@ -155,6 +157,9 @@ class ConditionTrainer:
         input_ids = [p[tokens_after_special_mask[i]] for i, p in enumerate(input_ids)]
         attention_mask = [m[tokens_after_special_mask[i]] for i, m in enumerate(attention_mask)]
 
+        input_ids = torch.cat([p.unsqueeze(0) for p in input_ids], dim=0)
+        attention_mask = torch.cat([p.unsqueeze(0) for p in attention_mask], dim=0)
+
         if rmv_sep_token:
             input_ids = input_ids[:, 1:]
             attention_mask = attention_mask[:, 1:]
@@ -192,6 +197,7 @@ class ConditionTrainer:
                     for r in response_input_ids]
         return query, response
 
+    # MODIFIED
     def sample(self, step):
         if step % self.params.sample_interval != 0:
             return
@@ -209,10 +215,15 @@ class ConditionTrainer:
                 input_ids, attention_mask = self.add_control_code(input_ids, attention_mask)
                 rollouts = self.policy.sample(input_ids=input_ids, attention_mask=attention_mask, top_p=self.params.top_p)
                 response = rollouts['response/text']
-                prompt = self.decode(rollouts['query/input_ids'][:, 1:])
+                query_input_ids, _ = self.remove_control_code_batch(input_ids, attention_mask, rmv_sep_token=True)
+                prompt = self.decode(query_input_ids)
 
             prompts.extend(prompt)
             responses.extend(response)
+
+            if i == 100:
+                print("Breaking the sample loop after 100 batches")
+                break
 
         scores = self.score_model.get_reward(prompts, responses, f'step{step}')
         self.data_pool.add(prompts=prompts, responses=responses, scores=scores)
@@ -242,12 +253,19 @@ class ConditionTrainer:
         self.scheduler.step()
 
         for metric in ['kl', 'entropy']:
-            self.writer.add_scalar(f'Objective/{metric}', stats[f'objective/{metric}'], step_num)
+            # self.writer.add_scalar(f'Objective/{metric}', stats[f'objective/{metric}'], step_num)
+            wandb.log({f'Objective/{metric}': stats[f'objective/{metric}']}, step=step_num)
+
         for metric in ['lm', 'kl', 'entropy', 'total']:
-            self.writer.add_scalar(f'Loss/{metric}', stats[f'loss/{metric}'], step_num)
-        self.writer.add_scalar(f'Params/lr', self.optimizer.param_groups[0]['lr'], step_num)
-        self.writer.add_scalar(f'Params/kl_coef', self.kl_ctl.value, step_num)
-        self.writer.add_scalar(f'Params/entropy_coef', self.entropy_ctl.value, step_num)
+            # self.writer.add_scalar(f'Loss/{metric}', stats[f'loss/{metric}'], step_num)
+            wandb.log({f'Loss/{metric}': stats[f'loss/{metric}']}, step=step_num)
+
+        # self.writer.add_scalar(f'Params/lr', self.optimizer.param_groups[0]['lr'], step_num)
+        wandb.log({f'Params/lr': self.optimizer.param_groups[0]['lr']}, step=step_num)
+        #self.writer.add_scalar(f'Params/kl_coef', self.kl_ctl.value, step_num)
+        wandb.log({f'Params/kl_coef': self.kl_ctl.value}, step=step_num)
+        # self.writer.add_scalar(f'Params/entropy_coef', self.entropy_ctl.value, step_num)
+        wandb.log({f'Params/entropy_coef': self.entropy_ctl.value}, step=step_num)
 
         self.kl_ctl.update(stats['objective/kl'], self.params.batch_size, True)
         self.entropy_ctl.update(stats['objective/entropy'], self.params.batch_size, False)
@@ -311,8 +329,11 @@ class ConditionTrainer:
         if step % self.params.log_interval != 0:
             return
             # Log samples
+
+        log.info(f"[step {step}] Printing samples examples ...")
         for i in range(min(3, len(queries))):
             sample_kl = torch.sum((logprobs[i] - ref_logprobs[i]) * masks[i]).item()
+            print(f"\nSample {i+1}")
             print(queries[i] + responses[i])
             print(f"  lm_loss = {lm_loss[i].item():+.2f}")
             print(f"  kl = {sample_kl:+.2f}")
@@ -356,21 +377,33 @@ class ConditionTrainer:
                 toxicities.extend(toxicity)
 
                 generations.extend(rollouts['response/text'])
+                
+                if i == 10:
+                    print("Breaking the eval loop after 10 batches")
+                    break
 
         ppl_score, toxicity_score = np.mean(perplexities), np.mean(toxicities)
         dist_1, dist_2, dist_3 = distinctness(generations)
         print(f"  perplexity = {ppl_score:+.2f}")
         print(f"  toxicity = {toxicity_score:+.2f}")
         print(f'dist-1={dist_1:.3f}, dist-2={dist_2:.3f}, dist-3={dist_3:.3f}')
-        self.writer.add_scalar('Evaluation/perplexity', ppl_score, step)
-        self.writer.add_scalar('Evaluation/toxicity', toxicity_score, step)
-        self.writer.add_scalar('Evaluation/Dist-1', dist_1, step)
-        self.writer.add_scalar('Evaluation/Dist-2', dist_2, step)
-        self.writer.add_scalar('Evaluation/Dist-3', dist_3, step)
+        # self.writer.add_scalar('Evaluation/perplexity', ppl_score, step)
+        # self.writer.add_scalar('Evaluation/toxicity', toxicity_score, step)
+        # self.writer.add_scalar('Evaluation/Dist-1', dist_1, step)
+        # self.writer.add_scalar('Evaluation/Dist-2', dist_2, step)
+        # self.writer.add_scalar('Evaluation/Dist-3', dist_3, step)
+        wandb.log({f'Evaluation/perplexity': ppl_score}, step=step)
+        wandb.log({f'Evaluation/toxicity': toxicity_score}, step=step)
+        wandb.log({f'Evaluation/Dist-1': dist_1}, step=step)
+        wandb.log({f'Evaluation/Dist-2': dist_2}, step=step)
+        wandb.log({f'Evaluation/Dist-3': dist_3}, step=step)
 
 
 def main():
     args = get_args() # args is an "argparse.Namespace" object
+
+    wandb.login(key=WANDB_API_KEY)
+    wandb.init(project="sauc-ms-thesis", config=args)
 
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -399,14 +432,14 @@ def main():
     with open(os.path.join(args.save_dir, 'args.json'), 'w') as f:
         json.dump(args.__dict__, f, indent=2)
 
+    log.info(f'Initializing models ...')
+    ref_policy = Policy(model_name=args.init_model, temperature=args.temperature, device=device)
+    policy = Policy(model_name=args.ref_model, temperature=args.temperature, device=device, reward_cond=True)
+    
     tags = ["Lowest Toxicity", "Low-Moderate Toxicity", "Moderate Toxicity", "High-Moderate Toxicity", "Maximum Toxicity"]
     tree_tokens = [policy.tokenizer.convert_ids_to_tokens(policy.tokenizer(tag)["input_ids"]) for tag in tags]
     log.info(f"Using {args.num_quantiles} quantiles, associated with the following Natural Language tags: {tags}")
     log.info(f"The tags are converted to the following tokens: {tree_tokens}")
-
-    log.info(f'Initializing models ...')
-    ref_policy = Policy(model_name=args.init_model, temperature=args.temperature, device=device)
-    policy = Policy(model_name=args.ref_model, temperature=args.temperature, device=device, reward_cond=True)
     
     reward = Reward(save_path=args.reward_dir, rate_limit=args.perspective_rate_limit, batch_size=args.batch_size)
     data_pool = DataPool(tree_tokens=tree_tokens, num_quantiles=args.num_quantiles)
