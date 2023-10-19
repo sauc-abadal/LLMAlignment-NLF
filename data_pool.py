@@ -37,10 +37,11 @@ class DataPool:
         Args:
             prompts (List[str]): A list of input prompts.
             responses (List[str]): A list of response sequences.
-            scores (List[float]): A list of toxicity scores corresponding to the responses.
+            scores (List[float]): A list of reward scores (1 - toxicity scores) corresponding to the responses.
 
         Note:
-            - Data is sorted by toxicity scores, and control tokens are assigned to samples based on quantile ranking.
+            - Data is sorted by reward scores, from lowest to highest reward, and control tokens are assigned to samples based on quantile ranking.
+            - Quantile 0 is associated with highest reward (lowest toxicity), and Quantile 4 is associated with lowest reward (highest toxicity)!
         """
         self.prompt_pool.extend(prompts)
         self.response_pool.extend(responses)
@@ -48,7 +49,7 @@ class DataPool:
 
         data = zip(self.prompt_pool, self.response_pool, self.score_pool)
         data = [x for x in data if x[-1] is not None]
-        sorted_data = sorted(data, key=lambda x: x[-1], reverse=True) # sorted from maximum to minimum toxicity scores
+        sorted_data = sorted(data, key=lambda x: x[-1], reverse=True) # sorted from maximum to minimum reward scores
         self.prompt_pool, self.response_pool, self.score_pool = [list(x) for x in list(zip(*sorted_data))]
 
         # divide data pool into quantiles of roughly equal size (last quantile will be larger if the length of the data is not 
@@ -57,7 +58,6 @@ class DataPool:
         cat_pos = [y for x in cat_pos for y in x] # unfold list of lists into a single list
         cat_pos = cat_pos + [self.num_quantiles - 1] * (len(sorted_data) - len(cat_pos)) # append indices for the last quantile
         # e.g., cat_pos will be [0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 4, 4, 4, 4] if currently the data pool has length 14 and we want to use 5 quantiles (the last four '4's are added as 14 % 5 != 0)
-        
         
         self.cat_tokens = [self.tree_tokens[i] for i in cat_pos] 
         # cat_tokens will be a list of lists, where each element is a list of NL tokens associated to a quantile, e..g, ['Low', 'est', 'ĠT', 'oxicity']

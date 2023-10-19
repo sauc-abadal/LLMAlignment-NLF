@@ -15,7 +15,6 @@ from torch.utils.data import DataLoader
 from datasets_and_collators import PromptDataset, PromptCollator, SequenceDataset, SequenceCollator
 from torch.optim import Adam, Optimizer
 from torch.optim.lr_scheduler import LambdaLR
-# from torch.utils.tensorboard import SummaryWriter
 import wandb
 from utils.constants import WANDB_API_KEY
 from transformers import get_linear_schedule_with_warmup
@@ -74,8 +73,6 @@ class ConditionTrainer:
         self.val_dataloader = val_dataloader
         self.optimizer = optimizer
         self.scheduler = scheduler
-
-        # self.writer = SummaryWriter()
 
         if self.params.adaptive_kl:
             self.kl_ctl = AdaptiveController(self.params.kl_coef, self.params.target_kl, self.params.horizon)
@@ -149,16 +146,16 @@ class ConditionTrainer:
         Note:
             - Control tokens are removed from each sequence, and the separator token can also be removed if specified.
         """
+
+        bs, seq_len = input_ids.shape
+
         sep_token_id = self.policy.tokenizer.sep_token_id
         sep_token_mask = (input_ids == sep_token_id)
         cumulative_mask = sep_token_mask.cumsum(dim=1)
         tokens_after_special_mask = cumulative_mask > 0
-
-        input_ids = [p[tokens_after_special_mask[i]] for i, p in enumerate(input_ids)]
-        attention_mask = [m[tokens_after_special_mask[i]] for i, m in enumerate(attention_mask)]
-
-        input_ids = torch.cat([p.unsqueeze(0) for p in input_ids], dim=0)
-        attention_mask = torch.cat([p.unsqueeze(0) for p in attention_mask], dim=0)
+        
+        input_ids = input_ids[tokens_after_special_mask].reshape(bs, -1)
+        attention_mask = attention_mask[tokens_after_special_mask].reshape(bs, -1)
 
         if rmv_sep_token:
             input_ids = input_ids[:, 1:]
@@ -167,7 +164,7 @@ class ConditionTrainer:
         return input_ids, attention_mask
     
     # MODIFIED
-    def decode(self, query_input_ids, response_input_ids=None):
+    def decode(self, query_input_ids, response_input_ids=None, skip_special_tokens=True):
         """
         Decode token sequences into human-readable text.
 
@@ -187,7 +184,7 @@ class ConditionTrainer:
             If `response_input_ids` is not provided, it returns a list containing the decoded input sequences.
         """
 
-        query = [self.policy.tokenizer.decode(p, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+        query = [self.policy.tokenizer.decode(p, skip_special_tokens=skip_special_tokens, clean_up_tokenization_spaces=True)
                 for p in query_input_ids]
             
         if response_input_ids is None:
@@ -204,13 +201,14 @@ class ConditionTrainer:
         log.info(f"[step {step}] Sampling ...")
 
         prompts, responses = [], []
-        for i, batch in enumerate(tqdm(self.train_dataloader, total=len(self.train_dataloader),
-                                       desc='Sampling from current policy')):
+        for batch in tqdm(self.train_dataloader, total=len(self.train_dataloader), desc='Sampling from current policy'):
+            
             input_ids, attention_mask = batch
 
             if step == 0:
                 rollouts = self.ref_policy.sample(input_ids=input_ids, attention_mask=attention_mask, top_p=self.params.top_p)
                 prompt, response = rollouts['query/text'], rollouts['response/text']
+
             else:
                 input_ids, attention_mask = self.add_control_code(input_ids, attention_mask)
                 rollouts = self.policy.sample(input_ids=input_ids, attention_mask=attention_mask, top_p=self.params.top_p)
@@ -221,11 +219,7 @@ class ConditionTrainer:
             prompts.extend(prompt)
             responses.extend(response)
 
-            if i == 100:
-                print("Breaking the sample loop after 100 batches")
-                break
-
-        scores = self.score_model.get_reward(prompts, responses, f'step{step}')
+        scores = self.score_model.get_reward(prompts, responses, f'step{step}') # this gives directly rewards (i.e., 1 - toxicity scores) !!!
         self.data_pool.add(prompts=prompts, responses=responses, scores=scores)
 
         sample_dataset = SequenceDataset(data_pool=self.data_pool)
@@ -238,37 +232,39 @@ class ConditionTrainer:
         self.sample(step=step_num)
 
         try:
-            batch = next(self.sampler)
+            batch = next(self.sampler) # tuple of (query_input_ids, query_mask, response_input_ids, response_mask)
             assert len(batch[0]) == self.params.batch_size, 'insufficient batch'
-        except (StopIteration, AssertionError):
-            self.sampler = iter(self.sample_dataloader)
+
+        except (StopIteration, AssertionError): # StopIteration -> if the iterator reaches the end of the data | AssertionError -> insufficient batch size
+            self.sampler = iter(self.sample_dataloader) # This essentially resets the iterator to the beginning of the data...
             batch = next(self.sampler)
 
         self.optimizer.zero_grad()
+        # as the batch is obtained from an iterator of the SequenceDataset containing data from the actual data pool using the SequenceCollator class
+        # as a collator function, it already contains the corresponding NLF tokens prepended to each element of the batch,
+        # with left padding (according to the maximum NLF tokens length on the batch) and the SEP token.
         ppo_loss, stats = self.loss(step_num, *batch)
         ppo_loss.backward()
+
         if self.params.clip_grad:
             torch.nn.utils.clip_grad_norm_(self.policy.model.parameters(), self.params.max_grad_norm)
+
         self.optimizer.step()
         self.scheduler.step()
 
+        # --- LOGGING ---
         for metric in ['kl', 'entropy']:
-            # self.writer.add_scalar(f'Objective/{metric}', stats[f'objective/{metric}'], step_num)
             wandb.log({f'Objective/{metric}': stats[f'objective/{metric}']}, step=step_num)
 
         for metric in ['lm', 'kl', 'entropy', 'total']:
-            # self.writer.add_scalar(f'Loss/{metric}', stats[f'loss/{metric}'], step_num)
             wandb.log({f'Loss/{metric}': stats[f'loss/{metric}']}, step=step_num)
 
-        # self.writer.add_scalar(f'Params/lr', self.optimizer.param_groups[0]['lr'], step_num)
         wandb.log({f'Params/lr': self.optimizer.param_groups[0]['lr']}, step=step_num)
-        #self.writer.add_scalar(f'Params/kl_coef', self.kl_ctl.value, step_num)
         wandb.log({f'Params/kl_coef': self.kl_ctl.value}, step=step_num)
-        # self.writer.add_scalar(f'Params/entropy_coef', self.entropy_ctl.value, step_num)
         wandb.log({f'Params/entropy_coef': self.entropy_ctl.value}, step=step_num)
 
-        self.kl_ctl.update(stats['objective/kl'], self.params.batch_size, True)
-        self.entropy_ctl.update(stats['objective/entropy'], self.params.batch_size, False)
+        self.kl_ctl.update(stats['objective/kl'], self.params.batch_size, True) # this does nothing if using a FixedController for the KL
+        self.entropy_ctl.update(stats['objective/entropy'], self.params.batch_size, False) # this does nothing if using a FixedController for the Entorpy
 
         step_time = time.time() - step_started_at
         eps_per_second = float(self.params.batch_size) / step_time
@@ -280,19 +276,16 @@ class ConditionTrainer:
     def loss(self, step, query_input_ids, query_mask, response_input_ids, response_mask):
         outputs = self.policy.forward_pass(query_input_ids, query_mask, response_input_ids, response_mask)
         lm_loss, logprobs, entropy, logits = outputs['response/lm_loss'], outputs['response/log_prob'], \
-                                             outputs['response/entropy'], outputs['response/logits']
+                                             outputs['response/entropy'], outputs['response/logits']        
         logits = outputs['response/logits'][:, :, :-1] # don't consider the newly added logit associated to the "<|separator|>" token
         masks = response_mask.to(self.policy.device)
 
         with torch.no_grad():
-
-            query_input_ids, query_mask = self.remove_control_code_batch(query_input_ids, query_mask, rmv_sep_token=True)
-            ref_outputs = self.ref_policy.forward_pass(query_input_ids, query_mask,
-                                                       response_input_ids, response_mask)
+            query_input_ids, query_mask = self.remove_control_code_batch(query_input_ids, query_mask, rmv_sep_token=True)        
+            ref_outputs = self.ref_policy.forward_pass(query_input_ids, query_mask, response_input_ids, response_mask)
             ref_logprobs, ref_logits = ref_outputs['response/log_prob'], ref_outputs['response/logits']
 
         kl = torch.sum(self.kl_loss(F.log_softmax(ref_logits, dim=-1), F.softmax(logits, dim=-1)), dim=-1)
-
         loss = reduce_mean(lm_loss + self.kl_ctl.value * kl - self.entropy_ctl.value * entropy, masks)
 
         data = {'logprobs': logprobs, 'ref_logprobs': ref_logprobs, 'masks': masks,
@@ -301,12 +294,12 @@ class ConditionTrainer:
                 'entropy': reduce_mean(entropy, masks), 'total_loss': loss}
         stats = self.record_step_stats(data)
 
-        queries, responses = self.decode(query_input_ids, response_input_ids)
+        queries, responses = self.decode(query_input_ids, response_input_ids) # query_input_ids has already had their NLF tokens removed
         self.print_samples(queries=queries, responses=responses, lm_loss=reduce_mean(lm_loss, masks, axis=1),
                            logprobs=logprobs, ref_logprobs=ref_logprobs, masks=masks, step=step)
 
         return loss, stats
-
+    
     def record_step_stats(self, data):
         masks = data['masks']
         kl = torch.sum(self.kl_loss(F.log_softmax(data['ref_logits'], dim=-1), F.softmax(data['logits'], dim=-1)), dim=-1)
@@ -333,11 +326,11 @@ class ConditionTrainer:
         log.info(f"[step {step}] Printing samples examples ...")
         for i in range(min(3, len(queries))):
             sample_kl = torch.sum((logprobs[i] - ref_logprobs[i]) * masks[i]).item()
-            print(f"\nSample {i+1}")
-            print(queries[i] + responses[i])
-            print(f"  lm_loss = {lm_loss[i].item():+.2f}")
-            print(f"  kl = {sample_kl:+.2f}")
-            print(f"  total = {lm_loss[i].item() + self.params.kl_coef * sample_kl:+.2f}")
+            log.info(f"\nSample {i+1}")
+            log.info(f"{queries[i]} |{responses[i]}")
+            log.info(f"  lm_loss = {lm_loss[i].item():+.2f}")
+            log.info(f"  kl = {sample_kl:+.2f}")
+            log.info(f"  total = {lm_loss[i].item() + self.params.kl_coef * sample_kl:+.2f}")
 
     def save(self, step):
         if step % self.params.save_interval != 0:
@@ -370,28 +363,19 @@ class ConditionTrainer:
                 perplexity = -1. * reduce_sum(ref_logprobs, rollouts['response/mask'].float(), axis=1)
                 perplexities.extend(perplexity.cpu().detach().numpy().tolist())
 
-                prompt = self.decode(query_input_ids)
+                prompt = self.decode(query_input_ids) # query_input_ids has already had their NLF tokens removed
                 response = rollouts['response/text']
                 score = self.score_model.get_reward(prompt, response, f'step{step}_eval{i}')
                 toxicity = [reward_to_toxicity(x) for x in score if x is not None]
                 toxicities.extend(toxicity)
 
                 generations.extend(rollouts['response/text'])
-                
-                if i == 10:
-                    print("Breaking the eval loop after 10 batches")
-                    break
 
         ppl_score, toxicity_score = np.mean(perplexities), np.mean(toxicities)
         dist_1, dist_2, dist_3 = distinctness(generations)
-        print(f"  perplexity = {ppl_score:+.2f}")
-        print(f"  toxicity = {toxicity_score:+.2f}")
-        print(f'dist-1={dist_1:.3f}, dist-2={dist_2:.3f}, dist-3={dist_3:.3f}')
-        # self.writer.add_scalar('Evaluation/perplexity', ppl_score, step)
-        # self.writer.add_scalar('Evaluation/toxicity', toxicity_score, step)
-        # self.writer.add_scalar('Evaluation/Dist-1', dist_1, step)
-        # self.writer.add_scalar('Evaluation/Dist-2', dist_2, step)
-        # self.writer.add_scalar('Evaluation/Dist-3', dist_3, step)
+        log.info(f"  perplexity = {ppl_score:+.2f}")
+        log.info(f"  toxicity = {toxicity_score:+.2f}")
+        log.info(f'dist-1={dist_1:.3f}, dist-2={dist_2:.3f}, dist-3={dist_3:.3f}')
         wandb.log({f'Evaluation/perplexity': ppl_score}, step=step)
         wandb.log({f'Evaluation/toxicity': toxicity_score}, step=step)
         wandb.log({f'Evaluation/Dist-1': dist_1}, step=step)
@@ -424,8 +408,7 @@ def main():
     args.save_dir = os.path.join(args.output_dir, date_time)
     args.reward_dir = os.path.join(args.save_dir, 'reward')
     args.model_dir = os.path.join(args.save_dir, 'model')
-    args.tensorboard_dir = os.path.join(args.save_dir, 'tensorboard')
-    for d in [args.output_dir, args.save_dir, args.reward_dir, args.model_dir, args.tensorboard_dir]:
+    for d in [args.output_dir, args.save_dir, args.reward_dir, args.model_dir]:
         ensure_dir(d)
     log.info(f'Write to output directory: {args.save_dir}')
 
@@ -467,7 +450,10 @@ def main():
     for step_num in range(args.total_steps):
         try:
             trainer.step(step_num)
-        except RuntimeError:
+
+        except Exception as e:
+            log.info("There was an Exception while trying to perform trainer.step()!")
+            log.info(e)
             torch.cuda.empty_cache()
             continue
 

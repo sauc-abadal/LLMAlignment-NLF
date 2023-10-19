@@ -22,13 +22,11 @@ class Policy:
             # ADD SEPARATOR TOKEN (to be placed between NL Feedback and Prompt)
             self.tokenizer.add_tokens("<|separator|>", special_tokens=True)
             self.tokenizer.sep_token = "<|separator|>"
-            self.tokenizer.sep_token_id = self.tokenizer.convert_tokens_to_ids([self.tokenizer.sep_token])
             self.model.config.sep_token_id = self.tokenizer.sep_token_id
 
-            # initialize newly added embedding with the statistics of the already pre-trained embeddings
+            # initialize newly added embedding with the statistics of the already pre-trained EOS token embedding
             weights = self.model.get_input_embeddings().weight.detach().numpy()
-            mean_weights, std_weights = np.mean(weights, axis=0), np.std(weights, axis=0)
-            new_init = np.random.normal(loc=mean_weights, scale=std_weights)
+            new_init = weights[self.tokenizer.pad_token_id, :]
 
             self.model.resize_token_embeddings(len(self.tokenizer))
             with torch.no_grad():
@@ -95,7 +93,8 @@ class Policy:
 
                 # in the first decoding step, we want to use the 'real' last position for each sentence
                 if step == 0:
-                    last_non_masked_idx = torch.sum(attention_mask, dim=1) - 1
+                    # last_non_masked_idx = torch.sum(attention_mask, dim=1) - 1 # this will fail in our setup the queries have both left and right padding
+                    last_non_masked_idx = torch.argmax(torch.flip(attention_mask, dims=[1]), dim=1) # this retrieves the last 1 in the query mask
                     next_token_logits = outputs.logits[range(batch_size), last_non_masked_idx, :]
                 else:
                     next_token_logits = outputs.logits[:, -1, :]
@@ -116,7 +115,7 @@ class Policy:
                 # finished sentences should have their next token be a padding token
                 next_tokens = next_tokens * unfinished_sequences + self.tokenizer.pad_token_id * (1 - unfinished_sequences)
 
-                    # update output mask
+                # update output mask
                 output_mask = torch.cat([output_mask, unfinished_sequences[:, None]], dim=-1)
                 # update output log probability
                 token_logprob = torch.gather(log_prob, 1, next_tokens[:, None]).squeeze(1)
@@ -179,8 +178,10 @@ class Policy:
         )
         # get the first logit
         query_logits = outputs.logits[:, :query_seq_len, :]
-        last_non_masked_idx = torch.sum(query_mask, dim=1) - 1
+        # last_non_masked_idx = torch.sum(query_mask, dim=1) - 1 # this will fail in our setup the queries have both left and right padding
+        last_non_masked_idx = torch.argmax(torch.flip(query_mask, dims=[1]), dim=1) # this retrieves the last 1 in the query mask
         first_logits = query_logits[range(batch_size), last_non_masked_idx, :]
+
         # get the second to last logit
         response_logits = outputs.logits[:, query_seq_len:-1, :]
         logits = torch.cat([first_logits[:, None], response_logits], dim=1)

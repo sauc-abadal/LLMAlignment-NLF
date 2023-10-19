@@ -3,3 +3,4 @@ utils/__pycache__/
 *sh
 *out
 runs/
+wandb/*

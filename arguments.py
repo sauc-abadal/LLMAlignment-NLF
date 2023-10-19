@@ -26,7 +26,7 @@ def get_args():
         '--horizon', type=float, default=2500, help='horizon value in adaptive controller')
     # KL term
     parser.add_argument(
-        '--kl_coef', type=float, default=0.05, help='coefficient for KL term in reward')
+        '--kl_coef', type=float, default=0.05, help='coefficient for KL term in reward, the higher the coef. the lower the perplexity (encoruages the model to remain close to the inital policy)')
     parser.add_argument(
         '--adaptive_kl', action='store_true', default=False, help='whether to use adaptive KL controller')
     parser.add_argument(
