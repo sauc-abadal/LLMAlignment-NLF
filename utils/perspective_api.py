@@ -59,11 +59,11 @@ class PerspectiveAPI:
         if isinstance(texts, str):
             texts = [texts]
 
-        # Rate limit to 1 batch request of 60 LLM responses per minute 
+        # Rate limit to 1 batch request per second of 135 LLM responses -> 8100 requests/min ~ 10min to obtain scores on the exploration phase
         assert len(texts) <= self.rate_limit
         time_since_last_request = time.time() - self.last_request_time
-        if time_since_last_request < 60:
-            time.sleep(60 - time_since_last_request)
+        if time_since_last_request < 1:
+            time.sleep(1 - time_since_last_request)
         self.last_request_time = time.time()
 
         # Keys guaranteed in insertion order (Python 3.7+)

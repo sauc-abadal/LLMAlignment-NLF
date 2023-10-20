@@ -15,7 +15,7 @@ def get_args():
         '--dataset-val', type=str, default='data/toxicity/val.jsonl',
         help='JSONL file containing dev prompts. Each row must contain a prompt at `row["prompt"]["text"]`.')
     parser.add_argument(
-        '--perspective-rate-limit', type=int, default=60, help='number of perspective call per second')
+        '--perspective-rate-limit', type=int, default=135, help='number of perspective call per second')
 
     # reward
     parser.add_argument(
