@@ -94,7 +94,7 @@ class ConditionTrainer:
         self.seq_collator = SequenceCollator(tokenizer=policy.tokenizer)
 
     # MODIFIED
-    def add_control_code(self, input_ids, attention_mask):
+    def add_best_control_code(self, input_ids, attention_mask):
         """
         Prepend control tokens associated with the best performing quantile to a batch of input sequences.
 
@@ -126,7 +126,7 @@ class ConditionTrainer:
         return input_ids, attention_mask
 
     # NEWLY ADDED
-    def remove_control_code_batch(self, input_ids, attention_mask, rmv_sep_token=False):
+    def remove_any_control_code(self, input_ids, attention_mask, rmv_sep_token=False):
         """
         Remove control tokens from a batch of input sequences.
 
@@ -147,7 +147,7 @@ class ConditionTrainer:
             - Control tokens are removed from each sequence, and the separator token can also be removed if specified.
         """
 
-        bs, seq_len = input_ids.shape
+        bs, _ = input_ids.shape
 
         sep_token_id = self.policy.tokenizer.sep_token_id
         sep_token_mask = (input_ids == sep_token_id)
@@ -210,10 +210,10 @@ class ConditionTrainer:
                 prompt, response = rollouts['query/text'], rollouts['response/text']
 
             else:
-                input_ids, attention_mask = self.add_control_code(input_ids, attention_mask)
+                input_ids, attention_mask = self.add_best_control_code(input_ids, attention_mask)
                 rollouts = self.policy.sample(input_ids=input_ids, attention_mask=attention_mask, top_p=self.params.top_p)
                 response = rollouts['response/text']
-                query_input_ids, _ = self.remove_control_code_batch(input_ids, attention_mask, rmv_sep_token=True)
+                query_input_ids, _ = self.remove_any_control_code(input_ids, attention_mask, rmv_sep_token=True)
                 prompt = self.decode(query_input_ids)
 
             prompts.extend(prompt)
@@ -281,11 +281,23 @@ class ConditionTrainer:
         masks = response_mask.to(self.policy.device)
 
         with torch.no_grad():
-            query_input_ids, query_mask = self.remove_control_code_batch(query_input_ids, query_mask, rmv_sep_token=True)        
+            query_input_ids, query_mask = self.remove_any_control_code(query_input_ids, query_mask, rmv_sep_token=True)        
             ref_outputs = self.ref_policy.forward_pass(query_input_ids, query_mask, response_input_ids, response_mask)
             ref_logprobs, ref_logits = ref_outputs['response/log_prob'], ref_outputs['response/logits']
 
+
+        # Note 1: To avoid underflow issues when computing this quantity, this loss expects the argument 
+        # input ('prediction') in the log-space. The argument target may also be provided in 
+        # the log-space if log_target= True.
+        # Note 2: As all the other losses in PyTorch, this function expects the first argument, input, 
+        # to be the output of the model (e.g. the neural network) and the second, target, 
+        # to be the observations in the dataset. This differs from the standard mathematical 
+        # notation KL(P ∣∣ Q) where P denotes the distribution of the observations and Q denotes the model.
+
+        # REVIEW THIS... I WOULD CHANGE THE ORDER OF THE ARGUMENTS!
+        # the sum is taken just over the vocabulary tokens dimension, and would be averaged later using the response mask
         kl = torch.sum(self.kl_loss(F.log_softmax(ref_logits, dim=-1), F.softmax(logits, dim=-1)), dim=-1)
+        # REVIEW THIS... I WOULD AGGREGATE THE CONTRIBUTION OF THE KL LOSS WITH A "-" SIGN (to be minimized)
         loss = reduce_mean(lm_loss + self.kl_ctl.value * kl - self.entropy_ctl.value * entropy, masks)
 
         data = {'logprobs': logprobs, 'ref_logprobs': ref_logprobs, 'masks': masks,
@@ -351,10 +363,10 @@ class ConditionTrainer:
         generations, perplexities, toxicities = [], [], []
         for i, (input_ids, attention_mask) in enumerate(tqdm(self.val_dataloader)):
             with torch.no_grad():
-                input_ids, attention_mask = self.add_control_code(input_ids, attention_mask)
+                input_ids, attention_mask = self.add_best_control_code(input_ids, attention_mask)
                 rollouts = self.policy.sample(input_ids=input_ids, attention_mask=attention_mask, top_p=self.params.top_p)
 
-                query_input_ids, query_mask = self.remove_control_code_batch(rollouts['query/input_ids'], rollouts['query/mask'], rmv_sep_token=True)
+                query_input_ids, query_mask = self.remove_any_control_code(input_ids, attention_mask, rmv_sep_token=True)
                 forward_inputs = {'query_input_ids': query_input_ids,
                                   'query_mask': query_mask,
                                   'response_input_ids': rollouts['response/input_ids'],
