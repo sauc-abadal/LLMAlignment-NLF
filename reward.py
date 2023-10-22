@@ -6,74 +6,65 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 import logging
-from torch.utils.data import DataLoader
 from typing import Optional, List, Iterable, Dict, Any
 
-from policy import Policy
+import torch
+import torch.nn.functional as F
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+
 from utils.utils import batchify, load_jsonl
-from utils.perspective_api import PerspectiveWorker, make_generations_col
 
 logging.basicConfig(level=os.environ.get("LOGLEVEL", "INFO"))
 log = logging.getLogger(__name__)
 
 
 class Reward:
-    def __init__(self, save_path: str, rate_limit: int, batch_size: int):
+    def __init__(self, save_path: str, model_name_or_path: str, batch_size: int, device: str):
         self.path = save_path
-        self.rate_limit = rate_limit
+        self.model_name_or_path = model_name_or_path
         self.batch_size = batch_size
+        self.device = device
+
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name_or_path)
+        self.model = AutoModelForSequenceClassification.from_pretrained(self.model_name_or_path)
+        self.model.eval()
+        self.model = self.model.to(self.device)
 
     def get_reward(self, prompts: List[str], responses: List[str], epoch: str) -> List[float]:
-        perspective_file = Path(self.path) / f'perspective_{epoch}.json'
-        perspective = PerspectiveWorker(
-            out_file=perspective_file,
-            total=len(prompts),
-            rate_limit=self.rate_limit
-        )
+        reward_file = Path(self.path) / f'sentiment_{epoch}.json'
         assert len(prompts) == len(responses), f'prompts({len(prompts)}) and responses({len(responses)}) mismatch'
-        for i, r in enumerate(responses):
-            perspective(f'generation-{i}', r)
 
-        perspective.stop()
-        assert os.path.exists(perspective_file), 'missing perspective file'
-        data = pd.DataFrame.from_dict({'prompt': prompts})
-        results = collate(data, responses, load_jsonl(perspective_file), os.path.join(self.path, f'reward_{epoch}.json'))
-        rewards = [toxicity_to_reward(y['toxicity']) for x in results for y in x]
+
+        pbar = tqdm(total=len(prompts), dynamic_ncols=True)
+        pbar.set_description(f'Computing Positivity-Sentiment scores')
+
+        rewards = []
+
+        with reward_file.open('a') as f:
+            for batch_prompts, batch_responses in zip(batchify(prompts, self.batch_size), batchify(responses, self.batch_size)):
+                with torch.no_grad():
+                    input_dict = self.tokenizer(batch_responses, padding=True, return_tensors="pt")
+                    input_ids = input_dict["input_ids"].to(self.device)
+                    attention_mask = input_dict["attention_mask"].to(self.device)
+                    logits = self.model(input_ids, attention_mask).logits
+                    positivity_scores = F.softmax(logits, dim=1)[:, 1]
+
+                    for idx in range(len(batch_responses)):
+                        response_dict = {
+                            'prompt': batch_prompts[idx],
+                            'generations': {
+                                'text': batch_responses[idx],
+                                'positive_score': positivity_scores[idx].item()
+                            }
+                        }
+                        json.dump(response_dict, f)
+                        f.write('\n')
+
+                        rewards.append(positivity_scores[idx].item())
+                    
+                    pbar.update(len(batch_responses))
+
+        assert os.path.exists(reward_file), 'missing reward file'
 
         return rewards
 
-
-class DummyReward(Reward):
-    def get_reward(self, prompts: List[str], responses: List[str], epoch: str) -> List[float]:
-        return [np.random.normal() for x in prompts]
-
-
-def toxicity_to_reward(score):
-    if score is None:
-        return None
-    return 1 - score
-
-
-def reward_to_toxicity(score):
-    return 1 - score
-
-
-# this aggregates and combines data together (prompts, LLM generations, and scores from de API responses)
-# it returns a list containing a batch (another list) of elements as its elements.
-def collate(dataset: Optional[pd.DataFrame],
-            generations: List[str],
-            responses: Iterable[Dict[str, Any]],
-            output_file: str = ''):
-    generations_col_iter = make_generations_col(generations, responses)
-    if dataset is None:
-        generations_col = list(tqdm(generations_col_iter, total=len(generations), desc='Collating files'))
-        dataset = pd.DataFrame(generations_col)
-    else:
-        assert len(generations) % len(dataset) == 0
-        n = len(generations) // len(dataset)
-        generations_col = list(tqdm(batchify(generations_col_iter, n), total=len(dataset), desc='Collating files'))
-        dataset['generations'] = generations_col
-
-    if output_file:
-        dataset.to_json(output_file, orient='records', lines=True)
-    return generations_col

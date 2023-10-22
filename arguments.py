@@ -17,23 +17,32 @@ def get_args():
     parser.add_argument(
         '--perspective-rate-limit', type=int, default=135, help='number of perspective call per second')
 
-    # reward
+    # Reward
     parser.add_argument(
         '--num_quantiles', type=int, default=5, help='number of reward categorization')
     parser.add_argument(
         '--sample-interval', type=int, default=500, help='step interval to sample from current policy')
     parser.add_argument(
+
         '--horizon', type=float, default=2500, help='horizon value in adaptive controller')
-    # KL term
+    # KL term. The KL divergence mesasures the 'distance' between 2 probability distributions. We'll use it to make
+    # our policy not to drift too far away from the reference policy in order to preserve fluency (i.e., lower perplexity).
+    # Higher KL divergence indicates greater perplexity when te reference policy observes the current policy generations.
+    # We'll add this KL loss term as a penalty (to be minimzed -> + sign in the total loss).
     parser.add_argument(
         '--kl_coef', type=float, default=0.05, help='coefficient for KL term in reward, the higher the coef. the lower the perplexity (encoruages the model to remain close to the inital policy)')
     parser.add_argument(
         '--adaptive_kl', action='store_true', default=False, help='whether to use adaptive KL controller')
     parser.add_argument(
         '--target_kl', type=float, default=3, help='target value in adaptive KL controller')
-    # entropy term
+    
+    # Entropy term. The entropy measures the uncertainty on the observed probability distribution.
+    # Higher entropy indicates greater uncertainty in the distribution, while lower entropy means 
+    # the distribution is more certain or more peaked around specific outcomes.
+    # Adding a Entropy bonus/penalty (to be maximized -> - sign in the total loss) would increase 
+    # the "distinctness" on the LLM generations 
     parser.add_argument(
-        '--entropy_coef', type=float, default=0.06, help='coefficient for entropy term in reward')
+        '--entropy_coef', type=float, default=0.06, help='coefficient for entropy term in reward.')
     parser.add_argument(
         '--adaptive_entropy', action='store_true', default=False, help='whether to use adaptive entropy controller')
     parser.add_argument(

@@ -219,7 +219,7 @@ class ConditionTrainer:
             prompts.extend(prompt)
             responses.extend(response)
 
-        scores = self.score_model.get_reward(prompts, responses, f'step{step}') # this gives directly rewards (i.e., 1 - toxicity scores) !!!
+        scores = self.score_model.get_reward(prompts, responses, f'step{step}') # this gives directly rewards (i.e., positivity sentiment) !!!
         self.data_pool.add(prompts=prompts, responses=responses, scores=scores)
 
         sample_dataset = SequenceDataset(data_pool=self.data_pool)
@@ -348,7 +348,7 @@ class ConditionTrainer:
             return
         log.info(f"[step {step}] evaluating ...")
 
-        generations, perplexities, toxicities = [], [], []
+        generations, perplexities, positivities = [], [], []
         for i, (input_ids, attention_mask) in enumerate(tqdm(self.val_dataloader)):
             with torch.no_grad():
                 input_ids, attention_mask = self.add_control_code(input_ids, attention_mask)
@@ -366,18 +366,17 @@ class ConditionTrainer:
                 prompt = self.decode(query_input_ids) # query_input_ids has already had their NLF tokens removed
                 response = rollouts['response/text']
                 score = self.score_model.get_reward(prompt, response, f'step{step}_eval{i}')
-                toxicity = [reward_to_toxicity(x) for x in score if x is not None]
-                toxicities.extend(toxicity)
+                positivities.extend(score)
 
                 generations.extend(rollouts['response/text'])
 
-        ppl_score, toxicity_score = np.mean(perplexities), np.mean(toxicities)
+        ppl_score, positivity_score = np.mean(perplexities), np.mean(positivities)
         dist_1, dist_2, dist_3 = distinctness(generations)
         log.info(f"  perplexity = {ppl_score:+.2f}")
-        log.info(f"  toxicity = {toxicity_score:+.2f}")
+        log.info(f"  positivity = {positivity_score:+.2f}")
         log.info(f'dist-1={dist_1:.3f}, dist-2={dist_2:.3f}, dist-3={dist_3:.3f}')
         wandb.log({f'Evaluation/perplexity': ppl_score}, step=step)
-        wandb.log({f'Evaluation/toxicity': toxicity_score}, step=step)
+        wandb.log({f'Evaluation/positivity': positivity_score}, step=step)
         wandb.log({f'Evaluation/Dist-1': dist_1}, step=step)
         wandb.log({f'Evaluation/Dist-2': dist_2}, step=step)
         wandb.log({f'Evaluation/Dist-3': dist_3}, step=step)
@@ -424,7 +423,11 @@ def main():
     log.info(f"Using {args.num_quantiles} quantiles, associated with the following Natural Language tags: {tags}")
     log.info(f"The tags are converted to the following tokens: {tree_tokens}")
     
-    reward = Reward(save_path=args.reward_dir, rate_limit=args.perspective_rate_limit, batch_size=args.batch_size)
+    reward = Reward(save_path=args.reward_dir, 
+                    model_name_or_path="distilbert-base-uncased-finetuned-sst-2-english", 
+                    batch_size=args.batch_size,
+                    deivce=device
+                    )
     data_pool = DataPool(tree_tokens=tree_tokens, num_quantiles=args.num_quantiles)
     log.info(f'Initialization done!')
 

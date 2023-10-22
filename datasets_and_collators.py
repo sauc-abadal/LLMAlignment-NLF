@@ -146,11 +146,11 @@ class SequenceCollator(object):
 
         # Given a list of sequences, as the Natural Language Feedback tokens might be of different sizes, 
         # e.g., 
-        #    ['Low', 'est', 'ĠT', 'oxicity'] -> [20535, 395, 309, 44086] -> 4 tokens
-        #    ['Low', '-', 'Mod', 'erate', 'ĠT', 'oxicity'] -> [20535, 12, 5841, 21620, 309, 44086] -> 6 tokens
-        #    ['Mod', 'erate', 'ĠT', 'oxicity'] -> [5841, 21620, 309, 44086] -> 4 tokens
-        #    ['High', '-', 'Mod', 'erate', 'ĠT', 'oxicity'] -> [11922, 12, 5841, 21620, 309, 44086] -> 6 tokens
-        #    ['Maximum', 'ĠT', 'oxicity'] -> [40541, 309, 44086] -> 3 tokens
+        #    ['Very', 'ĠPositive'] -> [16371, 33733] -> 2 tokens
+        #    ['S', 'lightly', 'ĠPositive'] -> [50, 30945, 33733] -> 3 tokens
+        #    ['Ne', 'utral'] -> [8199,  6815] -> 2 tokens
+        #    ['S', 'lightly', 'ĠNegative'] -> [50, 30945, 36183] -> 3 tokens
+        #    ['Very', 'ĠNegative'] -> [16371, 36183] -> 2 tokens
         # 
         # we should pad them with the tokenizer.pad_token_id (I opted for padding on the left) to make them equal size and be able to
         # pass a batch of inputs to the LLM.
