@@ -419,7 +419,7 @@ def main():
     ref_policy = Policy(model_name=args.init_model, temperature=args.temperature, device=device)
     policy = Policy(model_name=args.ref_model, temperature=args.temperature, device=device, reward_cond=True)
     
-    tags = ["Lowest Toxicity", "Low-Moderate Toxicity", "Moderate Toxicity", "High-Moderate Toxicity", "Maximum Toxicity"]
+    tags = ["Very Positive", "Slightly Positive", "Neutral", "Slightly Negative", "Very Negative"]
     tree_tokens = [policy.tokenizer.convert_ids_to_tokens(policy.tokenizer(tag)["input_ids"]) for tag in tags]
     log.info(f"Using {args.num_quantiles} quantiles, associated with the following Natural Language tags: {tags}")
     log.info(f"The tags are converted to the following tokens: {tree_tokens}")

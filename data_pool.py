@@ -18,7 +18,7 @@ class DataPool:
             cat_tokens (List[List[str]]): NL tokens associated with the quantiles (initialized to None).
             prompt_pool (List[str]): A list of input prompts.
             response_pool (List[str]): A list of response sequences.
-            score_pool (List[float]): A list of toxicity scores.
+            score_pool (List[float]): A list of 'positivity sentiment' scores.
 
         Note:
             The `tree_tokens` list should contain NL tokens associated with each quantile (len(tree_tokens) == num_quantiles).
@@ -37,11 +37,11 @@ class DataPool:
         Args:
             prompts (List[str]): A list of input prompts.
             responses (List[str]): A list of response sequences.
-            scores (List[float]): A list of reward scores (1 - toxicity scores) corresponding to the responses.
+            scores (List[float]): A list of reward scores (positivity sentiment) corresponding to the responses.
 
         Note:
-            - Data is sorted by reward scores, from lowest to highest reward, and control tokens are assigned to samples based on quantile ranking.
-            - Quantile 0 is associated with highest reward (lowest toxicity), and Quantile 4 is associated with lowest reward (highest toxicity)!
+            - Data is sorted by reward scores, from highest to lowest reward, and control tokens are assigned to samples based on quantile ranking.
+            - Quantile 0 is associated with highest reward (highest positivity), and Quantile 4 is associated with lowest reward (lowest positivty)!
         """
         self.prompt_pool.extend(prompts)
         self.response_pool.extend(responses)
@@ -60,7 +60,7 @@ class DataPool:
         # e.g., cat_pos will be [0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 4, 4, 4, 4] if currently the data pool has length 14 and we want to use 5 quantiles (the last four '4's are added as 14 % 5 != 0)
         
         self.cat_tokens = [self.tree_tokens[i] for i in cat_pos] 
-        # cat_tokens will be a list of lists, where each element is a list of NL tokens associated to a quantile, e..g, ['Low', 'est', 'ĠT', 'oxicity']
+        # cat_tokens will be a list of lists, where each element is a list of NL tokens associated to a quantile, e..g, ['Very', 'ĠPositive']
 
     # DOCUMENTED
     def get_data(self):
