@@ -40,7 +40,7 @@ class DataPool:
             scores (List[float]): A list of reward scores (1 - toxicity scores) corresponding to the responses.
 
         Note:
-            - Data is sorted by reward scores, from lowest to highest reward, and control tokens are assigned to samples based on quantile ranking.
+            - Data is sorted by reward scores, from highest to lowest reward, and control tokens are assigned to samples based on quantile ranking.
             - Quantile 0 is associated with highest reward (lowest toxicity), and Quantile 4 is associated with lowest reward (highest toxicity)!
         """
         self.prompt_pool.extend(prompts)
