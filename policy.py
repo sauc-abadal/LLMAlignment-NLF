@@ -94,7 +94,7 @@ class Policy:
                 # in the first decoding step, we want to use the 'real' last position for each sentence
                 if step == 0:
                     # last_non_masked_idx = torch.sum(attention_mask, dim=1) - 1 # this will fail in our setup the queries have both left and right padding
-                    last_non_masked_idx = torch.argmax(torch.flip(attention_mask, dims=[1]), dim=1) # this retrieves the last 1 in the query mask
+                    last_non_masked_idx = (input_seq_len - 1) - torch.argmax(torch.flip(attention_mask, dims=[1]), dim=1) # this retrieves the position of the last 1 in the query mask
                     next_token_logits = outputs.logits[range(batch_size), last_non_masked_idx, :]
                 else:
                     next_token_logits = outputs.logits[:, -1, :]
@@ -179,7 +179,7 @@ class Policy:
         # get the first logit
         query_logits = outputs.logits[:, :query_seq_len, :]
         # last_non_masked_idx = torch.sum(query_mask, dim=1) - 1 # this will fail in our setup the queries have both left and right padding
-        last_non_masked_idx = torch.argmax(torch.flip(query_mask, dims=[1]), dim=1) # this retrieves the last 1 in the query mask
+        last_non_masked_idx = (query_seq_len - 1) - torch.argmax(torch.flip(query_mask, dims=[1]), dim=1) # this retrieves the last 1 in the query mask
         first_logits = query_logits[range(batch_size), last_non_masked_idx, :]
 
         # get the second to last logit
