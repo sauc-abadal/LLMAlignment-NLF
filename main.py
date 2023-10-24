@@ -201,7 +201,7 @@ class ConditionTrainer:
         log.info(f"[step {step}] Sampling ...")
 
         prompts, responses = [], []
-        for batch in tqdm(self.train_dataloader, total=len(self.train_dataloader), desc='Sampling from current policy'):
+        for i, batch in enumerate(tqdm(self.train_dataloader, total=len(self.train_dataloader), desc='Sampling from current policy')):
             
             input_ids, attention_mask = batch
 
@@ -268,7 +268,7 @@ class ConditionTrainer:
 
         step_time = time.time() - step_started_at
         eps_per_second = float(self.params.batch_size) / step_time
-        log.info(f"[step {step_num}] step_time={step_time:.2f}s, eps/s={eps_per_second:.2f}")
+        log.info(f"[step {step_num}] step_time={step_time:.2f}s, eps/s={eps_per_second:.2f}")     
         self.save(step=step_num)
         self.eval(step=step_num)
 
@@ -366,16 +366,18 @@ class ConditionTrainer:
                 input_ids, attention_mask = self.add_best_control_code(input_ids, attention_mask)
                 rollouts = self.policy.sample(input_ids=input_ids, attention_mask=attention_mask, top_p=self.params.top_p)
 
-                query_input_ids, query_mask = self.remove_any_control_code(input_ids, attention_mask, rmv_sep_token=True)
-                forward_inputs = {'query_input_ids': query_input_ids,
-                                  'query_mask': query_mask,
-                                  'response_input_ids': rollouts['response/input_ids'],
+                input_ids, attention_mask = self.remove_any_control_code(input_ids, attention_mask, rmv_sep_token=True)
+                forward_inputs = {'query_input_ids': input_ids, # this has the NLF tokens and SEP token removed
+                                  'query_mask': attention_mask,
+                                  'response_input_ids': rollouts['response/input_ids'], # we set the SEP token logit to -inf so this ID cannot be predicted as the next token
                                   'response_mask': rollouts['response/mask']}
+                
                 ref_logprobs = self.ref_policy.forward_pass(**forward_inputs)['response/log_prob']
+
                 perplexity = -1. * reduce_sum(ref_logprobs, rollouts['response/mask'].float(), axis=1)
                 perplexities.extend(perplexity.cpu().detach().numpy().tolist())
 
-                prompt = self.decode(query_input_ids) # query_input_ids has already had their NLF tokens removed
+                prompt = self.decode(input_ids) # input_ids has already had their NLF tokens removed
                 response = rollouts['response/text']
                 score = self.score_model.get_reward(prompt, response, f'step{step}_eval{i}')
                 toxicity = [reward_to_toxicity(x) for x in score if x is not None]
@@ -442,11 +444,11 @@ def main():
 
     prompt_collator = PromptCollator(tokenizer=policy.tokenizer)
     train_dataset = PromptDataset(path=args.dataset_train)
-    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, drop_last=True, collate_fn=prompt_collator)
+    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size*2, shuffle=True, drop_last=True, collate_fn=prompt_collator)
     log.info(f'Load train set with {len(train_dataset)} examples')
 
     val_dataset = PromptDataset(path=args.dataset_val)
-    val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, collate_fn=prompt_collator)
+    val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size*2, shuffle=False, collate_fn=prompt_collator)
     log.info(f'Load val set with {len(val_dataset)} examples')
 
     # set up optimizer and scheduler

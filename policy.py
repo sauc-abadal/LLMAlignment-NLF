@@ -17,6 +17,7 @@ class Policy:
         self.tokenizer = GPT2Tokenizer.from_pretrained(model_name, pad_token="<|endoftext|>")
         self.model.config.pad_token_id = self.tokenizer.pad_token_id
 
+        self.reward_cond = reward_cond
         if reward_cond:
 
             # ADD SEPARATOR TOKEN (to be placed between NL Feedback and Prompt)
@@ -37,6 +38,31 @@ class Policy:
         self.model.parallelize()
 
         self.temperature = temperature
+
+    # NEWLY ADDED
+    def find_last_non_masked_ids(self, attention_mask):
+        """
+        This is needed as we're experiencing a weird behavior from torch.argmax() and it is not
+        finding the first maximal values, but returning others... this is a bug that is supposedly
+        fix in newer Pytorch versions but we want to avoid any potential dependencies conflict.
+        An easy workaround is to perform the argmax with numpy tensors.
+
+        To increase performance we should avoid converting the tensors to numpy as this will require
+        to move them from gpu to cpu and back.
+
+        Find below a faster version
+        """
+        # sequence_length = attention_mask.shape[1]
+        # attention_mask_np = attention_mask.cpu().numpy()
+        # flipped_mask_np = np.flip(attention_mask_np, axis=1)
+        # first_max_indices_np = np.argmax(flipped_mask_np, axis=1)
+        # first_max_indices = torch.from_numpy(first_max_indices_np)
+        # last_non_masked_idx = (sequence_length - 1) - first_max_indices
+        # last_non_masked_idx.to(self.device)
+        
+        last_non_masked_idx = torch.cat([(attention_mask_batch == 1).nonzero()[-1] if (attention_mask_batch == 1).any() else torch.tensor([0]) for attention_mask_batch in attention_mask], dim=0)
+
+        return last_non_masked_idx
 
     def sample(self,
                prompts: Union[str, List[str]] = None,
@@ -94,13 +120,18 @@ class Policy:
                 # in the first decoding step, we want to use the 'real' last position for each sentence
                 if step == 0:
                     # last_non_masked_idx = torch.sum(attention_mask, dim=1) - 1 # this will fail in our setup the queries have both left and right padding
-                    last_non_masked_idx = (input_seq_len - 1) - torch.argmax(torch.flip(attention_mask, dims=[1]), dim=1) # this retrieves the position of the last 1 in the query mask
+                    last_non_masked_idx = self.find_last_non_masked_ids(attention_mask) # this retrieves the position of the last 1 in the query mask
                     next_token_logits = outputs.logits[range(batch_size), last_non_masked_idx, :]
                 else:
                     next_token_logits = outputs.logits[:, -1, :]
 
                 if step < min_len:
                     next_token_logits[:, self.model.config.eos_token_id] = float('-inf')
+                
+                # avoid sampling a sep_token in case that ID belongs to the policy's vocabulary
+                if self.reward_cond:
+                    next_token_logits[:, self.model.config.sep_token_id] = float('-inf')
+
                 log_prob = F.log_softmax(next_token_logits, dim=-1)
 
                 if sample:
@@ -133,7 +164,7 @@ class Policy:
 
                 if unfinished_sequences.max() == 0:
                     break
-
+             
         response_ids = input_ids[:, input_seq_len:]
         response_text = [self.tokenizer.decode(output, skip_special_tokens=True, clean_up_tokenization_spaces=True)
                          for output in response_ids]
@@ -168,7 +199,7 @@ class Policy:
         input_ids = torch.cat([query_input_ids, response_input_ids], dim=-1)
         model_kwargs = {'attention_mask': torch.cat([query_mask, response_mask], dim=-1)}
         model_inputs = self.model.prepare_inputs_for_generation(input_ids, **model_kwargs)
-
+        
         # forward pass to get next token
         outputs = self.model(
             **model_inputs,
@@ -179,7 +210,7 @@ class Policy:
         # get the first logit
         query_logits = outputs.logits[:, :query_seq_len, :]
         # last_non_masked_idx = torch.sum(query_mask, dim=1) - 1 # this will fail in our setup the queries have both left and right padding
-        last_non_masked_idx = (query_seq_len - 1) - torch.argmax(torch.flip(query_mask, dims=[1]), dim=1) # this retrieves the last 1 in the query mask
+        last_non_masked_idx = self.find_last_non_masked_ids(query_mask)  # this retrieves the last 1 in the query mask
         first_logits = query_logits[range(batch_size), last_non_masked_idx, :]
 
         # get the second to last logit
