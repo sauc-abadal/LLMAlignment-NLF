@@ -14,24 +14,24 @@ from utils.utils import load_jsonl, ensure_dir, reduce_sum
 from utils.perspective_api import PerspectiveWorker, make_generations_col
 import time
 
-save_path = '/cluster/work/sachan/sauc/ctgmlf/10-24-2023_10:55:41/evaluation'
+save_path = '/cluster/work/sachan/sauc/ctgnlf/quark_baseline/savepath'
 model = 'gpt2-large'
 batch_size = 4
 rate_limit = 120
 num_samples = 25
 n_extra_tokens = 5
 top_p = 0.9
-checkpoint_path = '/cluster/work/sachan/sauc/ctgnlf/10-24-2023_10:55:41/model/...'
+checkpoint_path = '/cluster/work/sachan/sauc/quark/ckp_11000.pth'
 print(checkpoint_path)
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 ensure_dir(save_path)
 
-tags = ["Lowest Toxicity", "Low-Moderate Toxicity", "Moderate Toxicity", "High-Moderate Toxicity", "Maximum Toxicity"]
-tree_tokens = [policy.tokenizer.convert_ids_to_tokens(policy.tokenizer(tag)["input_ids"]) for tag in tags]
-
 policy = Policy(model_name=model, temperature=1.0, device=device, reward_cond=True)
 prompt_collator = PromptCollator(tokenizer=policy.tokenizer)
+
+tags = ["Lowest Toxicity", "Low-Moderate Toxicity", "Moderate Toxicity", "High-Moderate Toxicity", "Maximum Toxicity"]
+tree_tokens = [policy.tokenizer.convert_ids_to_tokens(policy.tokenizer(tag)["input_ids"]) for tag in tags]
 best_cat_id = policy.tokenizer.convert_tokens_to_ids(tree_tokens[0])
 
 if checkpoint_path is not None:
