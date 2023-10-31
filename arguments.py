@@ -7,7 +7,7 @@ def get_args():
 
     # dataset
     parser.add_argument(
-        '--output-dir', type=str, default='outputs')
+        '--output-dir', type=str, default='output')
     parser.add_argument(
         '--dataset-train', type=str, default='data/toxicity/train.jsonl',
         help='JSONL file containing train prompts. Each row must contain a prompt at `row["prompt"]["text"]`.')
