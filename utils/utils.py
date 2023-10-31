@@ -94,15 +94,11 @@ def ensure_dir(d):
 
 
 def batchify(data: Iterable[T], batch_size: int) -> Iterable[List[T]]:
-    print("[Parallel thread] Trying to batchify a corpus...")
     assert batch_size > 0
-    print(type(data))
     batch = []
     for item in data:
-        print(type(item))
         # Yield next batch
         if len(batch) == batch_size:
-            print("[Parallel thread] Yielding a batch")
             yield batch
             batch = []
 
@@ -110,7 +106,6 @@ def batchify(data: Iterable[T], batch_size: int) -> Iterable[List[T]]:
 
     # Yield last un-filled batch
     if len(batch) != 0:
-        print("[Parallel thread] Yielding a batch")
         yield batch
 
 
