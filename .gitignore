@@ -2,5 +2,6 @@ __pycache__
 utils/__pycache__/
 *sh
 *out
-runs/
+runs/*
 wandb/*
+perplexity_baseline.py

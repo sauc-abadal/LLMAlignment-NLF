@@ -296,8 +296,8 @@ class ConditionTrainer:
 
         # REVIEW THIS... I WOULD CHANGE THE ORDER OF THE ARGUMENTS!
         # the sum is taken just over the vocabulary tokens dimension, and would be averaged later using the response mask
-        kl = torch.sum(self.kl_loss(F.log_softmax(ref_logits, dim=-1), F.softmax(logits, dim=-1)), dim=-1)
-        # REVIEW THIS... I WOULD AGGREGATE THE CONTRIBUTION OF THE KL LOSS WITH A "-" SIGN (to be minimized)
+        # kl = torch.sum(self.kl_loss(F.log_softmax(ref_logits, dim=-1), F.softmax(logits, dim=-1)), dim=-1)
+        kl = torch.sum(self.kl_loss(F.log_softmax(logits, dim=-1), F.softmax(ref_logits, dim=-1)), dim=-1)
         loss = reduce_mean(lm_loss + self.kl_ctl.value * kl - self.entropy_ctl.value * entropy, masks)
 
         data = {'logprobs': logprobs, 'ref_logprobs': ref_logprobs, 'masks': masks,
@@ -374,7 +374,9 @@ class ConditionTrainer:
                 
                 ref_logprobs = self.ref_policy.forward_pass(**forward_inputs)['response/log_prob']
 
-                perplexity = -1. * reduce_sum(ref_logprobs, rollouts['response/mask'].float(), axis=1)
+                # WRONGLY COMPUTED?
+                # perplexity = -1. * reduce_sum(ref_logprobs, rollouts['response/mask'].float(), axis=1)
+                perplexity = torch.exp(-1 * reduce_mean(ref_logprobs, rollouts['response/mask'].float(), axis=1), dim=1)
                 perplexities.extend(perplexity.cpu().detach().numpy().tolist())
 
                 prompt = self.decode(input_ids) # input_ids has already had their NLF tokens removed
@@ -385,7 +387,7 @@ class ConditionTrainer:
 
                 generations.extend(rollouts['response/text'])
 
-        ppl_score, toxicity_score = np.mean(perplexities), np.mean(toxicities)
+        ppl_score, toxicity_score = np.nanmean(perplexities), np.mean(toxicities)
         dist_1, dist_2, dist_3 = distinctness(generations)
         log.info(f"  perplexity = {ppl_score:+.2f}")
         log.info(f"  toxicity = {toxicity_score:+.2f}")
@@ -399,9 +401,6 @@ class ConditionTrainer:
 
 def main():
     args = get_args() # args is an "argparse.Namespace" object
-
-    wandb.login(key=WANDB_API_KEY)
-    wandb.init(project="sauc-ms-thesis", config=args)
 
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -419,6 +418,10 @@ def main():
 
     time = datetime.now()
     date_time = time.strftime("%m-%d-%Y_%H:%M:%S")
+
+    wandb.login(key=WANDB_API_KEY)
+    wandb.init(project="sauc-ms-thesis", config=args, name=date_time)
+
     args.save_dir = os.path.join(args.output_dir, date_time)
     args.reward_dir = os.path.join(args.save_dir, 'reward')
     args.model_dir = os.path.join(args.save_dir, 'model')
@@ -452,7 +455,7 @@ def main():
     log.info(f'Load val set with {len(val_dataset)} examples')
 
     # set up optimizer and scheduler
-    optimizer = Adam(policy.model.parameters(), lr=args.lr, eps=1e-5)
+    optimizer = Adam(policy.model.parameters(), lr=args.lr, eps=1e-8)
     args.total_steps = ceil_div(args.total_episodes, args.batch_size) # ((3,000,000 episodes - 1) // 128 bs) + 1 = 23,438 steps
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.num_warmup_steps, num_training_steps=args.total_steps) # wu 500 steps (~2%)
 
