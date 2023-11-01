@@ -7,7 +7,7 @@ def get_args():
 
     # dataset
     parser.add_argument(
-        '--output-dir', type=str, default='outputs')
+        '--output-dir', type=str, default='output')
     parser.add_argument(
         '--dataset-train', type=str, default='data/toxicity/train.jsonl',
         help='JSONL file containing train prompts. Each row must contain a prompt at `row["prompt"]["text"]`.')
@@ -15,34 +15,25 @@ def get_args():
         '--dataset-val', type=str, default='data/toxicity/val.jsonl',
         help='JSONL file containing dev prompts. Each row must contain a prompt at `row["prompt"]["text"]`.')
     parser.add_argument(
-        '--perspective-rate-limit', type=int, default=135, help='number of perspective call per second')
+        '--perspective-rate-limit', type=int, default=120, help='number of perspective call per second')
 
-    # Reward
+    # reward
     parser.add_argument(
         '--num_quantiles', type=int, default=5, help='number of reward categorization')
     parser.add_argument(
-        '--sample-interval', type=int, default=500, help='step interval to sample from current policy')
+        '--sample-interval', type=int, default=2000, help='step interval to sample from current policy')
     parser.add_argument(
-
         '--horizon', type=float, default=2500, help='horizon value in adaptive controller')
-    # KL term. The KL divergence mesasures the 'distance' between 2 probability distributions. We'll use it to make
-    # our policy not to drift too far away from the reference policy in order to preserve fluency (i.e., lower perplexity).
-    # Higher KL divergence indicates greater perplexity when te reference policy observes the current policy generations.
-    # We'll add this KL loss term as a penalty (to be minimzed -> + sign in the total loss).
+    # KL term
     parser.add_argument(
         '--kl_coef', type=float, default=0.05, help='coefficient for KL term in reward, the higher the coef. the lower the perplexity (encoruages the model to remain close to the inital policy)')
     parser.add_argument(
         '--adaptive_kl', action='store_true', default=False, help='whether to use adaptive KL controller')
     parser.add_argument(
         '--target_kl', type=float, default=3, help='target value in adaptive KL controller')
-    
-    # Entropy term. The entropy measures the uncertainty on the observed probability distribution.
-    # Higher entropy indicates greater uncertainty in the distribution, while lower entropy means 
-    # the distribution is more certain or more peaked around specific outcomes.
-    # Adding a Entropy bonus/penalty (to be maximized -> - sign in the total loss) would increase 
-    # the "distinctness" on the LLM generations 
+    # entropy term
     parser.add_argument(
-        '--entropy_coef', type=float, default=0.06, help='coefficient for entropy term in reward.')
+        '--entropy_coef', type=float, default=0.06, help='coefficient for entropy term in reward')
     parser.add_argument(
         '--adaptive_entropy', action='store_true', default=False, help='whether to use adaptive entropy controller')
     parser.add_argument(
@@ -60,13 +51,13 @@ def get_args():
 
     # training˚
     parser.add_argument(
-        '--total-episodes', type=int, default=3000000, help='total number of episodes')
+        '--total-episodes', type=int, default=1023969, help='total number of episodes')
     parser.add_argument(
-        '--batch_size', type=int, default=128, help='batch size')
+        '--batch_size', type=int, default=32, help='batch size')
     parser.add_argument(
         '--lr', type=float, default=1e-5, help='learning rate')
     parser.add_argument(
-        '--num_warmup_steps', type=int, default=500, help='number of warmup steps in lr scheduler')
+        '--num_warmup_steps', type=int, default=1600, help='number of warmup steps in lr scheduler')
     parser.add_argument(
         '--clip_grad', action='store_true', default=False, help='whether to clip gradient')
     parser.add_argument(
@@ -82,11 +73,11 @@ def get_args():
     parser.add_argument(
         '--seed', type=int, default=1, help='random seed (default: 1)')
     parser.add_argument(
-        '--log-interval', type=int, default=100, help='step interval to print out logs')
+        '--log-interval', type=int, default=400, help='step interval to print out logs')
     parser.add_argument(
-        '--save-interval', type=int, default=1000, help='step interval to save model checkpoints')
+        '--save-interval', type=int, default=4000, help='step interval to save model checkpoints')
     parser.add_argument(
-        '--eval-interval', type=int, default=500, help='step interval to do evaluation')
+        '--eval-interval', type=int, default=2000, help='step interval to do evaluation')
     parser.add_argument(
         '--cuda-deterministic', action='store_false', default=True,
         help="sets flags for determinism when using CUDA (potentially slow!)")
