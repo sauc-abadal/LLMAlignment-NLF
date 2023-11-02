@@ -160,7 +160,7 @@ if __name__ == "__main__":
     parser.add_argument('--test_set_path_negative', type=str, default='data/sentiment/raw/sentiment_prompts-10k/negative_prompts.jsonl', help='Path to the test set containing negative prompts')
     parser.add_argument('--test_set_path_neutral', type=str, default='data/sentiment/raw/sentiment_prompts-10k/neutral_prompts.jsonl', help='Path to the test set containing neutral prompts')
     parser.add_argument('--rate_limit', type=int, default=120, help='PerspectiveAPI Rate limit value')
-    parser.add_argument('--reward_cond', type=bool, default=True, help='Wether to use NLF reward tokens or not, set this to False to evaluate a baseline model')
+    parser.add_argument('--no_reward_cond', action="store_false", default=True, help='Whether to use NLF reward tokens or not. If specified, sets this to False to evaluate a baseline model')
 
     args = parser.parse_args()
 
@@ -172,7 +172,7 @@ if __name__ == "__main__":
     test_set_path_negative = args.test_set_path_negative
     test_set_path_neutral = args.test_set_path_neutral
     rate_limit = args.rate_limit
-    reward_cond = args.reward_cond
+    reward_cond = args.no_reward_cond
     model = 'gpt2-large'
     print(f"Checkpoint path to be loaded: {checkpoint_path}")
     print(f"Using NLF reward tokens: {reward_cond}")

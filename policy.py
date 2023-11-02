@@ -60,7 +60,7 @@ class Policy:
         # last_non_masked_idx = (sequence_length - 1) - first_max_indices
         # last_non_masked_idx.to(self.device)
         
-        last_non_masked_idx = torch.cat([(attention_mask_batch == 1).nonzero()[-1] if (attention_mask_batch == 1).any() else torch.tensor([0]) for attention_mask_batch in attention_mask], dim=0)
+        last_non_masked_idx = torch.cat([(attention_mask_batch == 1).nonzero()[-1] if (attention_mask_batch == 1).any() else torch.tensor([0]).to(self.device) for attention_mask_batch in attention_mask], dim=0)
 
         return last_non_masked_idx
 
