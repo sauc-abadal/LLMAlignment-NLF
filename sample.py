@@ -13,24 +13,27 @@ from reward import collate
 from utils.utils import load_jsonl, ensure_dir, reduce_sum
 from utils.perspective_api import PerspectiveWorker, make_generations_col
 
-save_path = 'SAVE_PATH'
+save_path = 'output/out_of_domain/savepath_quark'
 model = 'gpt2-large'
 batch_size = 4
-rate_limit = 135
+rate_limit = 120
 num_samples = 25
 n_extra_tokens = 5
 top_p = 0.9
-checkpoint_path = 'MODEL_CHECKPOINT_PATH'
-print(checkpoint_path)
+
+checkpoint_path = '/cluster/work/sachan/sauc/quark/ckp_11000.pth'
+print(f"Checkpoint path to be loaded: {checkpoint_path}")
+dataset_path = 'data/toxicity/out_of_domain/test.jsonl'
+print(f"Evaluating dataset on {dataset_path}")
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-ensure_dir(save_path)
+print(f"Saving results to {save_path}")
 
 tree_tokens = [' _TREE_TOKEN_{}'.format(str(idx).zfill(5)) for idx in range(n_extra_tokens)] + \
               [' _TREE_TOKEN_ZERO_COMMENTS']
+print(f"Using {n_extra_tokens} quantiles, associated with the following tokens {tree_tokens}")
 
 policy = Policy(model_name=model, temperature=1.0, device=device, reward_cond=True, tree_tokens=tree_tokens)
-# ref_policy = Policy(model_name='gpt2-xl', temperature=1.0, device=device)
 prompt_collator = PromptCollator(tokenizer=policy.tokenizer)
 
 best_cat_id = policy.tokenizer.convert_tokens_to_ids(tree_tokens[0])
@@ -39,9 +42,9 @@ if checkpoint_path is not None:
     checkpoint = torch.load(checkpoint_path, map_location='cpu')
     policy.model.load_state_dict(checkpoint['policy_model'])
 
-print('model initialization done!')
+print('Model initialization done!')
 
-val_dataset = PromptDataset(path='data/toxicity/dev.jsonl')
+val_dataset = PromptDataset(path=dataset_path)
 dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=prompt_collator, drop_last=True)
 
 perspective_file = Path(save_path) / 'perspective.json'
@@ -50,7 +53,6 @@ perspective = PerspectiveWorker(
     total=len(dataloader) * batch_size * num_samples,
     rate_limit=rate_limit
 )
-
 
 def expand(tensor, num_repeat):
     return torch.reshape(tensor[:, None].expand(-1, num_repeat, -1), [batch_size * num_repeat, -1])
@@ -94,22 +96,12 @@ for i, batch in enumerate(tqdm(dataloader, total=len(dataloader))):
 
     outputs = policy.sample(input_ids=expand(input_ids, num_samples), attention_mask=expand(attention_mask, num_samples),
                             top_p=top_p)
-    #
-    # forward_inputs = {'query_input_ids': outputs['query/input_ids'],
-    #                   'query_mask': outputs['query/mask'],
-    #                   'response_input_ids': outputs['response/input_ids'],
-    #                   'response_mask': outputs['response/mask']}
-    # ref_logprobs = ref_policy.forward_pass(**forward_inputs)['response/log_prob']
-    # perplexity = -1. * reduce_sum(ref_logprobs, outputs['response/mask'].float(), axis=1)
-    # perplexities.extend(perplexity.cpu().detach().numpy().tolist())
 
     prompt, response = outputs['query/text'], outputs['response/text']
     prompts.extend([x for n, x in enumerate(prompt) if not n % num_samples])
     responses.extend(response)
     for j, r in enumerate(response):
         perspective(f'generation-{i * batch_size + j}', r)
-#
-# print(f"average perplexity = {mean(perplexities):+.2f}")
 
 perspective.stop()
 assert os.path.exists(perspective_file), 'missing perspective file'

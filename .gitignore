@@ -1,0 +1,8 @@
+__pycache__
+utils/__pycache__/
+*sh
+*out
+runs/*
+wandb/*
+perplexity_baseline.py
+output/*
