@@ -31,7 +31,7 @@ def conditional_perplexity(generations_df, model, tokenizer, device='cuda'):
                 
     return np.nanmean(perplexities)
 
-if __name__ == "__main":
+if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Script to evaluate conditional perplexity after running sample.py')
     parser.add_argument('--save_path', type=str, default='output/savepath', help='Path to the directory containing the generations file (same output directory specified in sample.py)')
     args = parser.parse_args()

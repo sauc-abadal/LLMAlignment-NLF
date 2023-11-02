@@ -158,7 +158,7 @@ if __name__ == "__main__":
     parser.add_argument('--num_samples', type=int, default=25, help='Number of generations for each test prompt')
     parser.add_argument('--test_set_path', type=str, default='data/toxicity/test.jsonl', help='Path to the test set')
     parser.add_argument('--rate_limit', type=int, default=120, help='PerspectiveAPI Rate limit value')
-    parser.add_argument('--reward_cond', type=bool, default=True, help='Wether to use NLF reward tokens or not, set this to False to evaluate a baseline model')
+    parser.add_argument('--no_reward_cond', action="store_false", default=True, help='Whether to use NLF reward tokens or not. If specified, sets this to False to evaluate a baseline model')
 
     args = parser.parse_args()
 
@@ -169,7 +169,7 @@ if __name__ == "__main__":
     num_samples = args.num_samples
     test_set_path = args.test_set_path
     rate_limit = args.rate_limit
-    reward_cond = args.reward_cond
+    reward_cond = args.no_reward_cond
     model = 'gpt2-large'
     print(f"Checkpoint path to be loaded: {checkpoint_path}")
     print(f"Using NLF reward tokens: {reward_cond}")
