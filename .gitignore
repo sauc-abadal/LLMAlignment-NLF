@@ -5,3 +5,4 @@ utils/__pycache__/
 runs/*
 wandb/*
 perplexity_baseline.py
+output/*

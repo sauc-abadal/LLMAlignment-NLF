@@ -186,17 +186,14 @@ if __name__ == "__main__":
     tags = ["Lowest Negativity", "Low-Moderate Negativity", "Moderate Negativity", "High-Moderate Negativity", "Maximum Negativity"]
     tree_tokens = [policy.tokenizer.convert_ids_to_tokens(policy.tokenizer(tag)["input_ids"]) for tag in tags]
     best_cat_id = policy.tokenizer.convert_tokens_to_ids(tree_tokens[0])
+    if reward_cond:
+        print(f"Using {len(tags)} quantiles, associated with the following Natural Language tags: {tags}")
+        print(f"The tags are converted to the following tokens: {tree_tokens}")
 
     if checkpoint_path is not None:
         checkpoint = torch.load(checkpoint_path, map_location='cpu')
         policy.model.load_state_dict(checkpoint['policy_model'])
 
-    reward = Reward(save_path=save_path, 
-                    model_name_or_path="distilbert-base-uncased-finetuned-sst-2-english", 
-                    batch_size=batch_size*num_samples,
-                    deivce=device
-                    )
-    reward_file = Path(save_path) / 'reward.json'
     reward_tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased-finetuned-sst-2-english")
     reward_model = AutoModelForSequenceClassification.from_pretrained("distilbert-base-uncased-finetuned-sst-2-english")
     reward_model.eval()
@@ -204,13 +201,14 @@ if __name__ == "__main__":
 
     print('Model initialization done!')
     
-    def process_dataset(dataset_path, reward_file, batch_size, num_samples, top_p, reward_cond):
-
+    def process_dataset(dataset_path, save_path, batch_size, num_samples, top_p, reward_cond):
         test_dataset = PromptDataset(path=dataset_path)
         dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, collate_fn=prompt_collator, drop_last=True)
         print(f"Loading {dataset_path}")
-        print(f"The dataloader has {len(dataloader)} batches, which will lead to a total of {len(dataloader)*batch_size*num_samples} generations with associated toxicity score.")
-        
+        print(f"The dataloader has {len(dataloader)} batches, which will lead to a total of {len(dataloader)*batch_size*num_samples} generations with associated sentiment score.")
+        reward_file = Path(save_path) / f'reward_{dataset_path.split("/")[-1].split(".")[0]}.json'
+        print(f"Saving results to {reward_file}")
+
         responses = []
         for i, batch in enumerate(tqdm(dataloader, total=len(dataloader))):
             input_ids, attention_mask = batch
@@ -269,16 +267,16 @@ if __name__ == "__main__":
 
         # Calculate the overall mean percentage
         overall_mean_percentage = sum(mean_percentages) / len(mean_percentages) if mean_percentages else 0
-        print(f"Mean percentage of positive continuations among the {num_samples} generations for each prompt: {overall_mean_percentage}")
+        print(f'Mean percentage of positive continuations among the {num_samples} generations for the {dataset_path.split("/")[-1].split(".")[0]}: {overall_mean_percentage}')
 
         return responses, overall_mean_percentage
 
 
-    responses_negative, mean_percentage_negative = process_dataset(dataset_path=test_set_path_negative, reward_file=reward_file,
+    responses_negative, mean_percentage_negative = process_dataset(dataset_path=test_set_path_negative, save_path=save_path,
                                                                    batch_size=batch_size, num_samples=num_samples, top_p=top_p, reward_cond=reward_cond)
-    responses_neutral, mean_percentage_neutral = process_dataset(dataset_path=test_set_path_neutral, reward_file=reward_file,
+    responses_neutral, mean_percentage_neutral = process_dataset(dataset_path=test_set_path_neutral, save_path=save_path,
                                                                    batch_size=batch_size, num_samples=num_samples, top_p=top_p, reward_cond=reward_cond)
-    dist1, dist2, dist3 = distinctness(responses_negative.extend(responses_neutral), num_samples)
+    dist1, dist2, dist3 = distinctness(responses_negative + responses_neutral, num_samples)
     print(f'dist-1={dist1:.3f}, dist-2={dist2:.3f}, dist-3={dist3:.3f}')
 
     # write output results
