@@ -7,17 +7,16 @@ dataset = dataset.remove_columns("story")
 print(dataset)
 
 def processing_function(example):
-    idx = example["prompt"].find("]")
-    
-    if idx > 10:
-        example["prompt"] = {"text": example["prompt"][:-7]}
-    elif idx != -1:
-        example["prompt"] = {"text": example["prompt"][idx+2:]}
-    else:
-        example["prompt"] = {"text": example["prompt"]}
+    prompt = example["prompt"]
+    tags = ["[ WP ]", "[ SP ]", "[ EU ]", "[ CW ]", "[ TT ]", "[ PM ]", "[ MP ]", "[ IP ]", "[ PI ]", "[ OT ]", "[ RF ]"]
+    for tag in tags:
+        prompt = prompt.replace(tag, "")
+
+    example["prompt"] = {"text": prompt.strip()}
     return example
 
 dataset = dataset.map(processing_function, batched=False)
+dataset = dataset.filter(lambda x: bool(x["prompt"]["text"]))
 print(dataset)
 print(dataset[:5])
 
