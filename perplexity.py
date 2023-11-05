@@ -30,7 +30,7 @@ def conditional_perplexity(generations_df, model, tokenizer, device='cuda'):
     return np.nanmean(perplexities)
 
 
-save_path = 'SAVE_PATH'
+save_path = 'output/toxicity/out_of_domain/savepath_quark'
 generations_file = f'{save_path}/reward.json'
 print(generations_file)
 output_dir = Path(os.path.dirname(generations_file))

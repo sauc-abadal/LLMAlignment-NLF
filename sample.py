@@ -13,7 +13,7 @@ from reward import collate
 from utils.utils import load_jsonl, ensure_dir, reduce_sum
 from utils.perspective_api import PerspectiveWorker, make_generations_col
 
-save_path = 'output/out_of_domain/savepath_quark'
+save_path = 'output/toxicity/out_of_domain/savepath_quark'
 model = 'gpt2-large'
 batch_size = 4
 rate_limit = 120
