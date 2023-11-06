@@ -158,9 +158,11 @@ if __name__ == "__main__":
     parser.add_argument('--top_p', type=float, default=0.9, help='Top p value')
     parser.add_argument('--num_samples', type=int, default=25, help='Number of generations for each test prompt')
     parser.add_argument('--test_set_path_negative', type=str, default='data/sentiment/raw/sentiment_prompts-10k/negative_prompts.jsonl', help='Path to the test set containing negative prompts')
+    parser.add_argument('--test_set_path_positive', type=str, default='data/sentiment/raw/sentiment_prompts-10k/positive_prompts.jsonl', help='Path to the test set containing positive prompts')
     parser.add_argument('--test_set_path_neutral', type=str, default='data/sentiment/raw/sentiment_prompts-10k/neutral_prompts.jsonl', help='Path to the test set containing neutral prompts')
     parser.add_argument('--rate_limit', type=int, default=120, help='PerspectiveAPI Rate limit value')
     parser.add_argument('--no_reward_cond', action="store_false", default=True, help='Whether to use NLF reward tokens or not. If specified, sets this to False to evaluate a baseline model')
+    parser.add_argument('--positive_experiment', action="store_true", default=False, help='Whether to evaluate on steering away from Negative/Positive sentiment. If specifyied, steering away from Positive')
 
     args = parser.parse_args()
 
@@ -170,9 +172,11 @@ if __name__ == "__main__":
     top_p = args.top_p
     num_samples = args.num_samples
     test_set_path_negative = args.test_set_path_negative
+    test_set_path_positive = args.test_set_path_positive
     test_set_path_neutral = args.test_set_path_neutral
     rate_limit = args.rate_limit
     reward_cond = args.no_reward_cond
+    positive_experiment = args.positive_experiment
     model = 'gpt2-large'
     print(f"Checkpoint path to be loaded: {checkpoint_path}")
     print(f"Using NLF reward tokens: {reward_cond}")
@@ -183,9 +187,17 @@ if __name__ == "__main__":
     policy = Policy(model_name=model, temperature=1.0, device=device, reward_cond=reward_cond)
     prompt_collator = PromptCollator(tokenizer=policy.tokenizer)
 
-    tags = ["Lowest Negativity", "Low-Moderate Negativity", "Moderate Negativity", "High-Moderate Negativity", "Maximum Negativity"]
-    tree_tokens = [policy.tokenizer.convert_ids_to_tokens(policy.tokenizer(tag)["input_ids"]) for tag in tags]
-    best_cat_id = policy.tokenizer.convert_tokens_to_ids(tree_tokens[0])
+    if positive_experiment:
+        print("Steering away from Positive sentiment")
+        tags = ["Maximum Negativity", "High-Moderate Negativity", "Moderate Negativity", "Low-Moderate Negativity", "Lowest Negativity"]
+        tree_tokens = [policy.tokenizer.convert_ids_to_tokens(policy.tokenizer(tag)["input_ids"]) for tag in tags]
+        best_cat_id = policy.tokenizer.convert_tokens_to_ids(tree_tokens[0])
+    else:
+        print("Steering away from Negative sentiment")
+        tags = ["Lowest Negativity", "Low-Moderate Negativity", "Moderate Negativity", "High-Moderate Negativity", "Maximum Negativity"]
+        tree_tokens = [policy.tokenizer.convert_ids_to_tokens(policy.tokenizer(tag)["input_ids"]) for tag in tags]
+        best_cat_id = policy.tokenizer.convert_tokens_to_ids(tree_tokens[0])
+
     if reward_cond:
         print(f"Using {len(tags)} quantiles, associated with the following Natural Language tags: {tags}")
         print(f"The tags are converted to the following tokens: {tree_tokens}")
@@ -271,16 +283,25 @@ if __name__ == "__main__":
 
         return responses, overall_mean_percentage
 
-
-    responses_negative, mean_percentage_negative = process_dataset(dataset_path=test_set_path_negative, save_path=save_path,
+    if positive_experiment:
+        responses, mean_percentage_positive = process_dataset(dataset_path=test_set_path_positive, save_path=save_path,
                                                                    batch_size=batch_size, num_samples=num_samples, top_p=top_p, reward_cond=reward_cond)
+    else:
+        responses, mean_percentage_negative = process_dataset(dataset_path=test_set_path_negative, save_path=save_path,
+                                                                   batch_size=batch_size, num_samples=num_samples, top_p=top_p, reward_cond=reward_cond)
+    
     responses_neutral, mean_percentage_neutral = process_dataset(dataset_path=test_set_path_neutral, save_path=save_path,
                                                                    batch_size=batch_size, num_samples=num_samples, top_p=top_p, reward_cond=reward_cond)
-    dist1, dist2, dist3 = distinctness(responses_negative + responses_neutral, num_samples)
+    dist1, dist2, dist3 = distinctness(responses + responses_neutral, num_samples)
     print(f'dist-1={dist1:.3f}, dist-2={dist2:.3f}, dist-3={dist3:.3f}')
 
     # write output results
     with open(f'{save_path}/eval_results.txt', 'w') as fo:
-        fo.write(f'% Positive (negative prompts) = {mean_percentage_negative:.3f}\n')
+
+        if positive_experiment:
+            fo.write(f'% Positive (positive prompts) = {mean_percentage_positive:.3f}\n')
+        else:
+            fo.write(f'% Positive (negative prompts) = {mean_percentage_negative:.3f}\n')
+
         fo.write(f'% Positive (neutral prompts) = {mean_percentage_neutral:.3f}\n')
         fo.write(f'dist-1={dist1:.3f}, dist-2={dist2:.3f}, dist-3={dist3:.3f}\n')
