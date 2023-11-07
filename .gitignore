@@ -6,3 +6,5 @@ runs/*
 wandb/*
 perplexity_baseline.py
 output/*
+bash_jobs/*
+dummy*
