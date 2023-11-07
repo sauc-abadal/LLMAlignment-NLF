@@ -6,6 +6,7 @@ from tqdm import tqdm
 import math
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
+import argparse
 
 
 def conditional_perplexity(generations_df, model, tokenizer, device='cuda'):
@@ -29,25 +30,30 @@ def conditional_perplexity(generations_df, model, tokenizer, device='cuda'):
                 perplexities.append(ppl)
     return np.nanmean(perplexities)
 
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Script to evaluate conditional perplexity after running sample.py')
+    parser.add_argument('--save_path', type=str, default='output/savepath', help='Path to the directory containing the generations file (same output directory specified in sample.py)')
+    args = parser.parse_args()
 
-save_path = 'output/toxicity/out_of_domain/savepath_quark'
-generations_file = f'{save_path}/reward.json'
-print(generations_file)
-output_dir = Path(os.path.dirname(generations_file))
-assert os.path.exists(generations_file)
-generations_df = pd.read_json(generations_file, lines=True)
+    save_path = args.save_path
 
-# calculate fluency
-device = "cuda" if torch.cuda.is_available() else "cpu"
-eval_model = AutoModelForCausalLM.from_pretrained('gpt2-xl').to(device)
-eval_tokenizer = AutoTokenizer.from_pretrained('gpt2-xl')
-print('model initialization done!')
+    generations_file = f'{save_path}/reward.json'
+    print(generations_file)
+    output_dir = Path(os.path.dirname(generations_file))
+    assert os.path.exists(generations_file)
+    generations_df = pd.read_json(generations_file, lines=True)
 
-torch.cuda.empty_cache()
-with torch.no_grad():
-    ppl = conditional_perplexity(generations_df, eval_model, eval_tokenizer, device=device)
-print(f'perplexity = {ppl}')
+    # calculate fluency
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    eval_model = AutoModelForCausalLM.from_pretrained('gpt2-xl').to(device)
+    eval_tokenizer = AutoTokenizer.from_pretrained('gpt2-xl')
+    print('model initialization done!')
 
-# write output results
-with open(output_dir / 'eval_results.txt', 'a') as fo:
-    fo.write(f'perplexity = {ppl}\n')
+    torch.cuda.empty_cache()
+    with torch.no_grad():
+        ppl = conditional_perplexity(generations_df, eval_model, eval_tokenizer, device=device)
+    print(f'perplexity = {ppl}')
+
+    # write output results
+    with open(output_dir / 'eval_results.txt', 'a') as fo:
+        fo.write(f'perplexity = {ppl}\n')
