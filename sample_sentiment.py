@@ -50,6 +50,7 @@ def distinctness(responses, num_sample):
     return np.nanmean(dist1), np.nanmean(dist2), np.nanmean(dist3)
 
 if __name__ == "__main__":
+    print("Script started!")
     parser = argparse.ArgumentParser(description='Script for evaluation: Quark generalization to Sentiment experiment')
     parser.add_argument('--save_path', type=str, default='output/savepath', help='Path for saving evaluation results')
     parser.add_argument('--checkpoint_path', type=str, default='/cluster/work/sachan/sauc/quark/ckp_11000.pth', help='Path to the model under evaluation checkpoint, set this to None to evaluate a baseline model')
