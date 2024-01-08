@@ -1,9 +1,31 @@
-# CTG-NLF
+# LLM Alignment with NLF
 
-This is the provisional repo for our research on Controllable Text Generation with Natural Language Feedback.
+This is the repo for our research on LLM Alignment with Natural Language Feedback. In this repo work on a preliminarly step to assess the viability of our approach and use synthetically defined language tags instead of full-blown natural language feedback. The language tags are obtained by leveraging a Reward Model to quantize reward scores assigned to LLM-generared outputs, and further mapping the quantiles into tags.
+
+Notice that this poses a limition in our approach, as we are restricted by the performance of the Reward Model and the expressibility of the language tags. However, we achieve SoTA results in an unlearning toxicity task on the RealToxicityPrompts test set.
+
+During training we employed 5 quantiles and we further map them into the following language tags:
+
+tags = [
+        "Lowest Toxicity",
+        "Low-Moderate Toxicity",
+        "Moderate Toxicity",
+        "High-Moderate Toxicity",
+        "Maximum Toxicity"
+    ]
+
+Then, at inference time, we conditioned on the tag associated with the highest-reward quantile, i.e., "Lowest Toxicity".
+
+## Steering away from unwanted sentiment
+
+In this branch we carried out an experiment to assess the generalization capabilities of our approach, by using the toxicity checkpoint and just changing the language tags at inference time, whithout any further training. We evaluated on the OpenWebText Corpus (OWT) test set.
+
+## Model Checkpoint
+
+We release our model checkpoint for the unlearning toxicity task [here](gdrive_link).
 
 ## Requirement
-We suggest using conda to setup environment. You need to first replace ``prefix`` in [environment.yml](environment.yml) with your home path. With conda installed, create an environment called `ctgnlf` with:
+We suggest using conda to setup environment. You need to first replace ``prefix`` in [environment.yml](environment.yml) with your home path. With conda installed, create an environment called `nlf` with:
 ```
 conda env create -f environment.yml
 ```
@@ -13,7 +35,7 @@ Please refer to their website for API key application. Replace `PERSPECTIVE_API_
 
 ### Training
 
-For training CTG-NLF for toxicity reduction with default hyperparameters,
+For training for toxicity reduction with default hyperparameters,
 ```
 python main.py
 ```
@@ -21,18 +43,17 @@ You can change hyperparameters in [arguments.py](arguments.py) via argparse.
 
 ### Evaluation
 
-To evaluate the toxicity of unlearned model, please use [sample.py](sample.py). You need to first replace ``save_path`` and ``checkpoint_path`` with your output directory and model checkpoint path, then
+To evaluate the toxicity of unlearned model, please use [sample.py](sample.py). You need to first replace ``save_path`` and ``checkpoint_path`` with your output directory and model checkpoint path (can be provided through CLI), then
 ```
 python sample.py
 ```
 It will save the evaluation result to your output directory.
 
-To evaluate perplexity of the generations, please use [perplexity.py](perplexity.py). You need to first replace ``save_path`` with the same output directory specified above, then
+To evaluate perplexity of the generations, please use [perplexity.py](perplexity.py). You need to first replace ``save_path`` (can be provided through CLI) with the same output directory specified above, then
 ```
 python perplexity.py
 ```
 It will save the perplexity result to the same output directory.
-
 
 
 
