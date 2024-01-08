@@ -6,7 +6,7 @@ In this branch, we tackled a **single-task reward** setting consisting of unlear
 
 On the unlearning toxicity task, during training we employed 5 quantiles which we further mapped into the following language tags:
 
-python´´
+´´
 tags = [
         "Lowest Toxicity",
         "Low-Moderate Toxicity",
