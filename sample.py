@@ -159,6 +159,7 @@ if __name__ == "__main__":
     parser.add_argument('--test_set_path', type=str, default='data/toxicity/test.jsonl', help='Path to the test set')
     parser.add_argument('--rate_limit', type=int, default=120, help='PerspectiveAPI Rate limit value')
     parser.add_argument('--no_reward_cond', action="store_false", default=True, help='Whether to use NLF reward tokens or not. If specified, sets this to False to evaluate a baseline model')
+    parser.add_argument('--response_length', type=int, default=20, help='Max new tokens')
 
     args = parser.parse_args()
 
@@ -167,6 +168,7 @@ if __name__ == "__main__":
     batch_size = args.batch_size
     top_p = args.top_p
     num_samples = args.num_samples
+    response_length = args.response_length
     test_set_path = args.test_set_path
     rate_limit = args.rate_limit
     reward_cond = args.no_reward_cond
@@ -206,7 +208,7 @@ if __name__ == "__main__":
         input_ids, attention_mask = batch
         input_ids, attention_mask = add_best_control_code(input_ids, attention_mask, reward_cond=reward_cond)
         outputs = policy.sample(input_ids=expand(input_ids, num_samples), attention_mask=expand(attention_mask, num_samples),
-                                top_p=top_p)
+                                top_p=top_p, max_len=response_length)
 
         input_ids, _ = remove_any_control_code(input_ids, attention_mask, rmv_sep_token=True, reward_cond=reward_cond)
         prompt = decode(input_ids)

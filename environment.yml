@@ -1,4 +1,4 @@
-name: ctgnlf
+name: nlf
 channels:
   - pytorch
   - anaconda
