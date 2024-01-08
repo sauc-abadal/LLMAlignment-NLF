@@ -6,7 +6,7 @@ In this branch, we tackled a **single-task reward** setting consisting of unlear
 
 On the unlearning toxicity task, during training we employed 5 quantiles which we further mapped into the following language tags:
 
-python´´
+```
 tags = [
         "Lowest Toxicity",
         "Low-Moderate Toxicity",
@@ -14,7 +14,8 @@ tags = [
         "High-Moderate Toxicity",
         "Maximum Toxicity"
     ]
-´´
+```
+
 Then, at inference time, we conditioned on the tag associated with the highest-reward quantile, i.e., "Lowest Toxicity".
 
 ## Model Checkpoint
