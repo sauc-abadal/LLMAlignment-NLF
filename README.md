@@ -19,7 +19,7 @@ Then, at inference time, we conditioned on the tag associated with the highest-r
 
 ## Model Checkpoint
 
-We release our model checkpoint for the unlearning toxicity task [here]([gdrive_link](https://drive.google.com/file/d/1x8Y5HMTrcekLdb0hP2pp3Wy3kICN9FDU/view?usp=sharing)).
+We release our model checkpoint for the unlearning toxicity task [here](https://drive.google.com/file/d/1x8Y5HMTrcekLdb0hP2pp3Wy3kICN9FDU/view?usp=sharing).
 
 ## Requirement
 We suggest using conda to setup environment. You need to first replace ``prefix`` in [environment.yml](environment.yml) with your home path. With conda installed, create an environment called `nlf` with:
